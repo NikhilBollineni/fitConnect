@@ -28,6 +28,7 @@
     },
     "android": {
       "package": "com.nikhilbollineni.fitconnect",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f172a"
