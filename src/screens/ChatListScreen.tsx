@@ -7,6 +7,18 @@ import { useNavigation } from '@react-navigation/native';
 import tw from 'twrnc';
 import { COLORS } from '../constants/theme';
 import { MessageCircle, Users } from 'lucide-react-native';
+import { useUserPresence } from '../hooks/usePresence';
+
+// ─── PresenceDot: Real-time online indicator for a single user ───
+function PresenceDot({ userId }: { userId: string | null }) {
+    const { isOnline } = useUserPresence(userId);
+    return (
+        <View style={[
+            tw`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-slate-900`,
+            isOnline ? tw`bg-green-500` : tw`bg-slate-600`,
+        ]} />
+    );
+}
 
 // ─── Constants ───
 const DEMO_PARTICIPANT_IDS = ['demo_trainer', 'coach_mike'];
@@ -99,48 +111,76 @@ export default function ChatListScreen() {
         );
     };
 
+    // ─── Helpers: relative time ───
+    const getRelativeTime = (date: Date | null): string => {
+        if (!date) return '';
+        const diffMs = Date.now() - date.getTime();
+        const diffMin = Math.floor(diffMs / 60000);
+        if (diffMin < 1) return 'now';
+        if (diffMin < 60) return `${diffMin}m`;
+        const diffHrs = Math.floor(diffMin / 60);
+        if (diffHrs < 24) return `${diffHrs}h`;
+        const diffDays = Math.floor(diffHrs / 24);
+        if (diffDays === 1) return 'yesterday';
+        if (diffDays < 7) return `${diffDays}d`;
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    };
+
     // ─── Render ───
     const renderItem = ({ item }: { item: any }) => {
         const name = getOtherParticipantName(item);
-        const time = item.updatedAt?.toDate?.()?.toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-        });
+        const otherId = item.participants?.find((id: string) => id !== user?.uid) || null;
+        const updatedDate = item.updatedAt?.toDate?.() || null;
+        const timeText = getRelativeTime(updatedDate);
         const lastMessage = item.lastMessage || 'Start a conversation';
+        const unread = item.unreadCount?.[user?.uid] || 0;
 
         return (
             <TouchableOpacity
-                style={tw`flex-row items-center p-4 mx-4 mb-2 bg-slate-900/50 rounded-2xl active:bg-slate-800`}
+                style={tw`flex-row items-center p-4 mx-4 mb-2 bg-[${COLORS.backgroundLight}] rounded-2xl`}
                 onPress={() => navigation.navigate('Chat', { chatId: item.id, title: name })}
                 onLongPress={() => handleDeleteChat(item.id, name)}
+                activeOpacity={0.7}
             >
                 <View style={tw`relative`}>
-                    <View style={tw`w-14 h-14 rounded-full bg-slate-700 items-center justify-center border-2 border-slate-800`}>
-                        <Text style={tw`text-white font-bold text-lg`}>{name.charAt(0)}</Text>
+                    <View style={[
+                        tw`w-13 h-13 rounded-full bg-slate-700 items-center justify-center`,
+                        unread > 0 ? tw`border-2 border-[${COLORS.primary}]` : tw`border border-white/10`,
+                    ]}>
+                        <Text style={tw`text-white font-bold text-lg`}>{name.charAt(0).toUpperCase()}</Text>
                     </View>
-                    {/* Online Status Dot (Green) */}
-                    <View style={tw`absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-slate-900`} />
-
-                    {/* N3: Unread Badge */}
-                    {(item.unreadCount?.[user?.uid] || 0) > 0 && (
-                        <View style={tw`absolute -top-1 -right-1 bg-red-500 rounded-full min-w-[20px] h-5 items-center justify-center border-2 border-slate-900 px-1`}>
-                            <Text style={tw`text-white text-[10px] font-bold`}>
-                                {item.unreadCount[user.uid] > 9 ? '9+' : item.unreadCount[user.uid]}
-                            </Text>
-                        </View>
-                    )}
+                    {/* Real presence dot */}
+                    <PresenceDot userId={otherId} />
                 </View>
 
-                <View style={tw`flex-1 ml-4 justify-center`}>
-                    <View style={tw`flex-row justify-between items-baseline mb-1`}>
-                        <Text style={tw`text-white font-bold text-base flex-1 mr-2`} numberOfLines={1}>
+                <View style={tw`flex-1 ml-3.5 justify-center`}>
+                    <View style={tw`flex-row justify-between items-center mb-1`}>
+                        <Text style={[
+                            tw`text-base flex-1 mr-2`,
+                            unread > 0 ? tw`text-white font-bold` : tw`text-white font-semibold`,
+                        ]} numberOfLines={1}>
                             {name}
                         </Text>
-                        <Text style={tw`text-slate-500 text-xs font-medium`}>{time}</Text>
+                        <Text style={[
+                            tw`text-xs font-medium`,
+                            unread > 0 ? tw`text-[${COLORS.primary}]` : tw`text-slate-500`,
+                        ]}>{timeText}</Text>
                     </View>
-                    <Text style={tw`text-slate-400 text-sm`} numberOfLines={1}>
-                        {lastMessage}
-                    </Text>
+                    <View style={tw`flex-row items-center justify-between`}>
+                        <Text style={[
+                            tw`text-sm flex-1 mr-2`,
+                            unread > 0 ? tw`text-slate-300 font-medium` : tw`text-slate-500`,
+                        ]} numberOfLines={1}>
+                            {lastMessage}
+                        </Text>
+                        {unread > 0 && (
+                            <View style={tw`bg-[${COLORS.primary}] rounded-full min-w-[20px] h-5 items-center justify-center px-1.5`}>
+                                <Text style={tw`text-black text-[10px] font-bold`}>
+                                    {unread > 9 ? '9+' : unread}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
                 </View>
             </TouchableOpacity>
         );

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, KeyboardAvoidingView, Platform, Alert, Modal, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, TextInput, KeyboardAvoidingView, Platform, Alert, Modal, Animated, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import tw from 'twrnc';
 import { useNavigation } from '@react-navigation/native';
@@ -186,9 +186,10 @@ export default function WorkoutView({ route }: { route: any }) {
     const userId = user?.uid ?? 'anonymous';
 
     const initialValues: WorkoutData = workoutData
-        ? { ...workoutData, title: workoutData.title || workoutData.name || 'Workout', duration: workoutData.duration || '45 min' }
+        ? { ...workoutData, title: workoutData.title || workoutData.name || 'Workout', duration: workoutData.duration || '45 min', exercises: workoutData.exercises || [] }
         : { id: 'empty', title: 'Workout', duration: '45 min', exercises: [] };
     const [workout, setWorkout] = useState<WorkoutData>(initialValues);
+    const [loadingLog, setLoadingLog] = useState(false);
 
     // Previous Session Data
     // const previousSession = null; // Removed hardcoded null
@@ -198,6 +199,48 @@ export default function WorkoutView({ route }: { route: any }) {
     const [preferredUnit, setPreferredUnit] = useState<string>('kg'); // Changed default to kg, will be updated from profile
 
     const isFirstSession = isReviewMode && lastSessionData === null;
+
+    // ─── Fetch full workout log when opened from chat (only ID was passed) ───
+    useEffect(() => {
+        if (!isReviewMode || !workoutData?.id || (workoutData.exercises && workoutData.exercises.length > 0)) return;
+
+        const fetchWorkoutLog = async () => {
+            setLoadingLog(true);
+            try {
+                const logDoc = await getDoc(doc(db, 'workoutLogs', workoutData.id));
+                if (logDoc.exists()) {
+                    const data = logDoc.data();
+                    const exercises: ExerciseData[] = (data.exercises || []).map((ex: any, eIdx: number) => ({
+                        id: ex.id || `ex-${eIdx}`,
+                        name: ex.name || 'Exercise',
+                        sets: (ex.sets || []).map((s: any, sIdx: number) => ({
+                            id: s.id || `set-${eIdx}-${sIdx}`,
+                            targetWeight: String(s.weight ?? s.targetWeight ?? ''),
+                            targetReps: String(s.reps ?? s.targetReps ?? ''),
+                            actualWeight: String(s.actualWeight ?? s.weight ?? ''),
+                            actualReps: String(s.actualReps ?? s.reps ?? ''),
+                            completed: s.completed ?? true,
+                        })),
+                    }));
+
+                    setWorkout({
+                        id: logDoc.id,
+                        title: data.title || data.name || 'Workout',
+                        duration: data.duration || '45 min',
+                        exercises,
+                        createdAt: data.createdAt,
+                        clientId: data.clientId,
+                    } as any);
+                }
+            } catch (e) {
+                console.error('Error fetching workout log for review:', e);
+            } finally {
+                setLoadingLog(false);
+            }
+        };
+
+        fetchWorkoutLog();
+    }, [isReviewMode, workoutData?.id]);
 
     useEffect(() => {
         const fetchUserData = async () => {
@@ -1107,6 +1150,16 @@ export default function WorkoutView({ route }: { route: any }) {
         setWorkout(updated);
     };
 
+
+    // ─── Loading state when fetching workout log from Firestore ───
+    if (loadingLog || (isReviewMode && workout.exercises.length === 0 && workoutData?.id)) {
+        return (
+            <View style={[tw`flex-1 bg-[${COLORS.background}] items-center justify-center`]}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+                <Text style={tw`text-slate-400 mt-4 text-sm`}>Loading workout...</Text>
+            </View>
+        );
+    }
 
     // ─── Victory Modal (rendered before any view mode to guarantee display) ───
     if (showVictory) {

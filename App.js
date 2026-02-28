@@ -115,6 +115,7 @@ function RootNavigator() {
           <Stack.Screen name="Chat" component={ChatScreen} />
           <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} />
           <Stack.Screen name="Program" component={ProgramScreen} />
+          <Stack.Screen name="EditPlan" component={EditPlanScreen} />
           <Stack.Screen name="AIGenerator" component={AIGeneratorView} />
         </>
       )}

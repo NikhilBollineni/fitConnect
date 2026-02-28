@@ -6,13 +6,16 @@ import tw from 'twrnc';
 import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { Dumbbell, Calendar, Flame, Utensils, TrendingUp, Zap, ChevronRight, Sparkles, User, Bell, Plus, Scale, Target } from 'lucide-react-native';
+import { Dumbbell, Calendar, Flame, Utensils, TrendingUp, Zap, ChevronRight, Sparkles, User, Bell, Plus, Scale, Target, Flag, Check, Pencil, UserCheck, XCircle } from 'lucide-react-native';
 import { db } from '../lib/firebase';
-import { collection, getDocs, query, where, doc, getDoc, orderBy, limit, Timestamp, addDoc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc, orderBy, limit, Timestamp, addDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { calculateStats } from '../utils/analyticsHelpers';
 import { UserProfile } from '../types/firestore';
 import WorkoutCalendar from '../components/WorkoutCalendar';
 import { sendPlanRequestMessage } from '../utils/planRequest';
+import { format, differenceInDays } from 'date-fns';
+import DatePickerModal from '../components/DatePickerModal';
+import { sendJourneyDateMessage } from '../utils/journeyDate';
 
 export default function ClientDashboard() {
     const navigation = useNavigation();
@@ -31,6 +34,9 @@ export default function ClientDashboard() {
     const [prevWeight, setPrevWeight] = useState<{ weight: number; unit: string } | null>(null);
     const [showWeightModal, setShowWeightModal] = useState(false);
     const [weightInput, setWeightInput] = useState('');
+    const [showJourneyPicker, setShowJourneyPicker] = useState(false);
+    const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+    const [respondingToRequest, setRespondingToRequest] = useState<string | null>(null);
 
     const { user } = useAuth();
     const userId = user?.uid ?? '';
@@ -40,7 +46,7 @@ export default function ClientDashboard() {
         setError(null);
         try {
             // 1. Fetch Plan — server-side filtered
-            const planSnapshot = await getDocs(query(collection(db, "plans"), where('clientId', '==', userId)));
+            const planSnapshot = await getDocs(query(collection(db, "plans"), where('clientId', '==', userId), limit(10)));
             const plans = planSnapshot.docs
                 .map(d => ({ id: d.id, ...d.data() }))
                 .sort((a, b) => ((b as any).createdAt?.seconds || 0) - ((a as any).createdAt?.seconds || 0));
@@ -68,7 +74,7 @@ export default function ClientDashboard() {
                 var logs = logSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             } catch (err) {
                 console.warn("Index missing for optimized query, falling back to all docs", err);
-                const logSnapshot = await getDocs(query(collection(db, "workoutLogs"), where('clientId', '==', userId)));
+                const logSnapshot = await getDocs(query(collection(db, "workoutLogs"), where('clientId', '==', userId), limit(100)));
                 var logs = logSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
             }
 
@@ -132,6 +138,24 @@ export default function ClientDashboard() {
                 // Subcollection may not exist yet — that's fine
             }
 
+            // 5. Fetch pending coaching requests (for solo users)
+            const profile = profileDoc.exists() ? profileDoc.data() : null;
+            if (!profile?.trainerId) {
+                try {
+                    const reqSnapshot = await getDocs(
+                        query(collection(db, 'trainerRequests'), where('clientId', '==', userId), where('status', '==', 'pending'))
+                    );
+                    const reqs = reqSnapshot.docs
+                        .map(d => ({ id: d.id, ...d.data() }))
+                        .sort((a: any, b: any) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+                    setPendingRequests(reqs);
+                } catch (e) {
+                    console.warn('Could not fetch trainer requests:', e);
+                }
+            } else {
+                setPendingRequests([]);
+            }
+
         } catch (err) {
             console.error("Error fetching dashboard data:", err);
             setError('Could not load your dashboard. Pull down to retry.');
@@ -159,6 +183,45 @@ export default function ClientDashboard() {
             Alert.alert('Error', 'Could not send the request. Please try again.');
         } finally {
             setSendingRequest(false);
+        }
+    };
+
+    // ─── Handle Coaching Request Accept / Decline ───
+    const handleCoachingRequest = async (requestId: string, action: 'accepted' | 'declined') => {
+        setRespondingToRequest(requestId);
+        try {
+            await updateDoc(doc(db, 'trainerRequests', requestId), {
+                status: action,
+                respondedAt: Timestamp.now(),
+            });
+
+            // If accepted, link the trainer to this user's profile
+            if (action === 'accepted') {
+                const req = pendingRequests.find(r => r.id === requestId);
+                if (req?.trainerId) {
+                    await updateDoc(doc(db, 'clientProfiles', userId), {
+                        trainerId: req.trainerId,
+                    });
+                }
+            }
+
+            // Remove from local list
+            setPendingRequests(prev => prev.filter(r => r.id !== requestId));
+
+            Alert.alert(
+                action === 'accepted' ? 'Trainer Accepted! 🎉' : 'Request Declined',
+                action === 'accepted'
+                    ? 'Great! Your new trainer will be in touch soon.'
+                    : 'The request has been declined.',
+            );
+
+            // Refresh dashboard to reflect new trainer state
+            if (action === 'accepted') fetchData();
+        } catch (e) {
+            console.error('Error responding to coaching request:', e);
+            Alert.alert('Error', 'Something went wrong. Please try again.');
+        } finally {
+            setRespondingToRequest(null);
         }
     };
 
@@ -190,7 +253,7 @@ export default function ClientDashboard() {
             await addDoc(collection(db, 'clientProfiles', userId, 'weightLogs'), {
                 weight: val,
                 unit: weightUnit,
-                date: Timestamp.now(),
+                date: serverTimestamp(),
             });
             await updateDoc(doc(db, 'clientProfiles', userId), { weight: val.toString() });
             if (latestWeight) setPrevWeight(latestWeight);
@@ -206,6 +269,9 @@ export default function ClientDashboard() {
     const today = new Date().toLocaleDateString('en-US', { weekday: 'long' });
     const todayRoutine = clientProfile?.exercisePlan?.[today];
     const todayMeals = clientProfile?.dietPlan?.[today];
+
+    // Solo user check (no trainer assigned)
+    const isSolo = !clientProfile?.trainerId;
 
     // Alias for header compatibility
     const clientData = clientProfile;
@@ -280,6 +346,111 @@ export default function ClientDashboard() {
                 contentContainerStyle={tw`pb-32`}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
             >
+
+                {/* ─── Pending Journey Date Banner ─── */}
+                {(clientProfile as any)?.journeyDateStatus === 'pending' && (clientProfile as any)?.pendingJourneyDate && (
+                    <View style={tw`px-6 mb-4`}>
+                        <View style={tw`bg-purple-500/10 border border-purple-500/20 rounded-2xl p-4`}>
+                            <View style={tw`flex-row items-center gap-2 mb-2`}>
+                                <Calendar size={16} color="#c084fc" />
+                                <Text style={tw`text-purple-300 font-bold text-sm`}>Journey Start Date</Text>
+                            </View>
+                            <Text style={tw`text-white font-bold text-base mb-1`}>
+                                Your trainer proposed {format((clientProfile as any).pendingJourneyDate.toDate?.() || new Date(), 'MMMM d, yyyy')}
+                            </Text>
+                            <Text style={tw`text-purple-300/60 text-xs mb-3`}>
+                                Is this when your fitness journey started?
+                            </Text>
+                            <View style={tw`flex-row gap-2`}>
+                                <TouchableOpacity
+                                    onPress={async () => {
+                                        if (!userId) return;
+                                        try {
+                                            const pendingDate = (clientProfile as any).pendingJourneyDate?.toDate?.() || new Date();
+                                            await updateDoc(doc(db, 'clientProfiles', userId), {
+                                                journeyStartDate: (clientProfile as any).pendingJourneyDate,
+                                                pendingJourneyDate: null,
+                                                journeyDateStatus: 'confirmed',
+                                            });
+                                            // Notify trainer
+                                            const trainerId = (clientProfile as any)?.trainerId;
+                                            if (trainerId && user) {
+                                                const confirmText = `✅ I've confirmed ${format(pendingDate, 'MMMM d, yyyy')} as our journey start date!`;
+                                                await sendJourneyDateMessage(
+                                                    { uid: userId, displayName: user.displayName },
+                                                    trainerId, pendingDate, userId,
+                                                    clientProfile?.name || 'Client', 'client'
+                                                );
+                                            }
+                                            fetchData();
+                                            Alert.alert('Confirmed!', 'Journey start date has been set.');
+                                        } catch (e) { Alert.alert('Error', 'Could not confirm date.'); }
+                                    }}
+                                    style={tw`flex-1 bg-[${COLORS.primary}] py-3 rounded-xl items-center flex-row justify-center gap-1.5`}
+                                >
+                                    <Check size={16} color="black" />
+                                    <Text style={tw`text-black font-bold text-sm`}>Accept</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={() => setShowJourneyPicker(true)}
+                                    style={tw`flex-1 bg-white/5 border border-white/10 py-3 rounded-xl items-center flex-row justify-center gap-1.5`}
+                                >
+                                    <Pencil size={14} color="#c084fc" />
+                                    <Text style={tw`text-purple-300 font-bold text-sm`}>Edit</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                )}
+
+                {/* ─── Coaching Requests Banner (Solo Users) ─── */}
+                {isSolo && pendingRequests.length > 0 && (
+                    <View style={tw`px-6 mb-4`}>
+                        {pendingRequests.map((req) => (
+                            <View
+                                key={req.id}
+                                style={tw`bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 mb-2`}
+                            >
+                                <View style={tw`flex-row items-center gap-2 mb-2`}>
+                                    <UserCheck size={16} color="#60a5fa" />
+                                    <Text style={tw`text-blue-300 font-bold text-sm`}>Coaching Request</Text>
+                                </View>
+                                <Text style={tw`text-white font-bold text-base mb-1`}>
+                                    {req.trainerName || 'A trainer'} wants to coach you
+                                </Text>
+                                {req.message ? (
+                                    <Text style={tw`text-blue-300/60 text-xs mb-3 leading-4`}>
+                                        "{req.message}"
+                                    </Text>
+                                ) : (
+                                    <Text style={tw`text-blue-300/60 text-xs mb-3`}>
+                                        Accept to start your coaching journey
+                                    </Text>
+                                )}
+                                <View style={tw`flex-row gap-2`}>
+                                    <TouchableOpacity
+                                        onPress={() => handleCoachingRequest(req.id, 'declined')}
+                                        disabled={respondingToRequest === req.id}
+                                        style={tw`flex-1 bg-white/5 border border-white/10 py-3 rounded-xl items-center flex-row justify-center gap-1.5`}
+                                    >
+                                        <XCircle size={14} color="#94a3b8" />
+                                        <Text style={tw`text-slate-300 font-bold text-sm`}>Decline</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        onPress={() => handleCoachingRequest(req.id, 'accepted')}
+                                        disabled={respondingToRequest === req.id}
+                                        style={tw`flex-1 bg-[${COLORS.primary}] py-3 rounded-xl items-center flex-row justify-center gap-1.5`}
+                                    >
+                                        <Check size={16} color="black" />
+                                        <Text style={tw`text-black font-bold text-sm`}>
+                                            {respondingToRequest === req.id ? 'Updating...' : 'Accept'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        ))}
+                    </View>
+                )}
 
                 {/* ─── Hero Workout Section ─── */}
                 <View style={tw`px-6 mb-8`}>
@@ -396,6 +567,35 @@ export default function ClientDashboard() {
                     </View>
                 </View>
 
+                {/* ─── Journey Card ─── */}
+                {(clientProfile as any)?.journeyDateStatus === 'confirmed' && (clientProfile as any)?.journeyStartDate && (
+                    <TouchableOpacity
+                        onPress={() => setShowJourneyPicker(true)}
+                        activeOpacity={0.7}
+                        style={tw`px-6 mb-6`}
+                    >
+                        <View style={tw`bg-[${COLORS.backgroundLight}] rounded-2xl p-4 border border-purple-500/10 flex-row items-center justify-between`}>
+                            <View style={tw`flex-row items-center gap-3`}>
+                                <View style={tw`w-10 h-10 bg-purple-500/15 rounded-full items-center justify-center`}>
+                                    <Flag size={20} color="#c084fc" />
+                                </View>
+                                <View>
+                                    <Text style={tw`text-white font-bold text-base`}>
+                                        {differenceInDays(new Date(), (clientProfile as any).journeyStartDate?.toDate?.() || new Date())} days
+                                    </Text>
+                                    <Text style={tw`text-slate-400 text-xs`}>
+                                        Journey started {format((clientProfile as any).journeyStartDate?.toDate?.() || new Date(), 'MMM d, yyyy')}
+                                    </Text>
+                                </View>
+                            </View>
+                            <View style={tw`flex-row items-center gap-1`}>
+                                <Pencil size={12} color="#64748b" />
+                                <Text style={tw`text-slate-500 text-xs`}>Edit</Text>
+                            </View>
+                        </View>
+                    </TouchableOpacity>
+                )}
+
                 {/* ─── Workout Calendar ─── */}
                 <View style={tw`px-6 mb-6`}>
                     <WorkoutCalendar clientId={userId} compact={true} />
@@ -431,6 +631,18 @@ export default function ClientDashboard() {
                                     <Text style={tw`text-slate-500 text-[10px] uppercase tracking-wider`}>{today}</Text>
                                 </View>
                             </View>
+                            {isSolo && todayMeals && (
+                                <TouchableOpacity
+                                    onPress={() => (navigation as any).navigate('EditPlan', {
+                                        clientId: userId,
+                                        clientName: clientName,
+                                        isSolo: true,
+                                    })}
+                                    style={tw`w-8 h-8 bg-white/5 rounded-full items-center justify-center`}
+                                >
+                                    <Pencil size={14} color="#64748b" />
+                                </TouchableOpacity>
+                            )}
                         </View>
 
                         {
@@ -458,7 +670,21 @@ export default function ClientDashboard() {
                             ) : (
                                 <View style={tw`items-center py-3`}>
                                     <Text style={tw`text-slate-500 text-sm`}>No meal plan for today</Text>
-                                    <Text style={tw`text-slate-600 text-xs mt-1`}>Your trainer can assign meals</Text>
+                                    {isSolo ? (
+                                        <TouchableOpacity
+                                            onPress={() => (navigation as any).navigate('EditPlan', {
+                                                clientId: userId,
+                                                clientName: clientName,
+                                                isSolo: true,
+                                            })}
+                                            style={tw`flex-row items-center gap-2 px-4 py-2.5 rounded-full border border-orange-500/40 bg-orange-500/10 mt-3`}
+                                        >
+                                            <Plus size={14} color="#f97316" />
+                                            <Text style={tw`text-sm font-bold text-orange-400`}>Create Meal Plan</Text>
+                                        </TouchableOpacity>
+                                    ) : (
+                                        <Text style={tw`text-slate-600 text-xs mt-1`}>Your trainer can assign meals</Text>
+                                    )}
                                 </View>
                             )
                         }
@@ -476,11 +702,25 @@ export default function ClientDashboard() {
                                     <Text style={tw`text-slate-500 text-[10px] uppercase tracking-wider`}>{today}</Text>
                                 </View>
                             </View>
-                            {todayRoutine && todayRoutine.length > 0 && (
-                                <View style={[tw`px-2.5 py-1 rounded-lg`, { backgroundColor: `${COLORS.primary}1A` }]}>
-                                    <Text style={{ color: COLORS.primary, fontSize: 10, fontWeight: '700' }}>{todayRoutine.length} exercises</Text>
-                                </View>
-                            )}
+                            <View style={tw`flex-row items-center gap-2`}>
+                                {todayRoutine && todayRoutine.length > 0 && (
+                                    <View style={[tw`px-2.5 py-1 rounded-lg`, { backgroundColor: `${COLORS.primary}1A` }]}>
+                                        <Text style={{ color: COLORS.primary, fontSize: 10, fontWeight: '700' }}>{todayRoutine.length} exercises</Text>
+                                    </View>
+                                )}
+                                {isSolo && todayRoutine && todayRoutine.length > 0 && (
+                                    <TouchableOpacity
+                                        onPress={() => (navigation as any).navigate('EditPlan', {
+                                            clientId: userId,
+                                            clientName: clientName,
+                                            isSolo: true,
+                                        })}
+                                        style={tw`w-8 h-8 bg-white/5 rounded-full items-center justify-center`}
+                                    >
+                                        <Pencil size={14} color="#64748b" />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
                         </View>
 
                         {
@@ -504,23 +744,38 @@ export default function ClientDashboard() {
                             ) : (
                                 <View style={tw`items-center py-3`}>
                                     <Text style={tw`text-slate-500 text-sm mb-1`}>No exercises scheduled</Text>
-                                    <Text style={tw`text-slate-600 text-xs mb-3`}>Your trainer can assign a routine</Text>
-                                    {/* CTA: Ask coach — only shown when a trainer is assigned */}
-                                    {!!clientProfile?.trainerId && (
+                                    {isSolo ? (
                                         <TouchableOpacity
-                                            onPress={handleRequestExercisePlan}
-                                            disabled={planRequestSent || sendingRequest}
-                                            style={tw`flex-row items-center gap-2 px-4 py-2.5 rounded-full border ${
-                                                planRequestSent
-                                                    ? 'border-green-500/30 bg-green-500/10'
-                                                    : 'border-[' + COLORS.primary + ']/40 bg-[' + COLORS.primary + ']/10'
-                                            }`}
+                                            onPress={() => (navigation as any).navigate('EditPlan', {
+                                                clientId: userId,
+                                                clientName: clientName,
+                                                isSolo: true,
+                                            })}
+                                            style={tw`flex-row items-center gap-2 px-4 py-2.5 rounded-full border border-[${COLORS.primary}]/40 bg-[${COLORS.primary}]/10 mt-2`}
                                         >
-                                            <Bell size={14} color={planRequestSent ? '#22c55e' : COLORS.primary} />
-                                            <Text style={tw`text-sm font-bold ${planRequestSent ? 'text-green-400' : 'text-[' + COLORS.primary + ']'}`}>
-                                                {sendingRequest ? 'Sending…' : planRequestSent ? 'Request Sent ✓' : 'Ask Coach for Plan'}
-                                            </Text>
+                                            <Plus size={14} color={COLORS.primary} />
+                                            <Text style={tw`text-sm font-bold text-[${COLORS.primary}]`}>Create Workout Plan</Text>
                                         </TouchableOpacity>
+                                    ) : (
+                                        <>
+                                            <Text style={tw`text-slate-600 text-xs mb-3`}>Your trainer can assign a routine</Text>
+                                            {!!clientProfile?.trainerId && (
+                                                <TouchableOpacity
+                                                    onPress={handleRequestExercisePlan}
+                                                    disabled={planRequestSent || sendingRequest}
+                                                    style={tw`flex-row items-center gap-2 px-4 py-2.5 rounded-full border ${
+                                                        planRequestSent
+                                                            ? 'border-green-500/30 bg-green-500/10'
+                                                            : 'border-[' + COLORS.primary + ']/40 bg-[' + COLORS.primary + ']/10'
+                                                    }`}
+                                                >
+                                                    <Bell size={14} color={planRequestSent ? '#22c55e' : COLORS.primary} />
+                                                    <Text style={tw`text-sm font-bold ${planRequestSent ? 'text-green-400' : 'text-[' + COLORS.primary + ']'}`}>
+                                                        {sendingRequest ? 'Sending…' : planRequestSent ? 'Request Sent ✓' : 'Ask Coach for Plan'}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            )}
+                                        </>
                                     )}
                                 </View>
                             )
@@ -606,6 +861,42 @@ export default function ClientDashboard() {
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
+
+            {/* ─── Journey Date Picker Modal ─── */}
+            <DatePickerModal
+                visible={showJourneyPicker}
+                onClose={() => setShowJourneyPicker(false)}
+                onSelect={async (date) => {
+                    if (!userId) return;
+                    try {
+                        await updateDoc(doc(db, 'clientProfiles', userId), {
+                            journeyStartDate: Timestamp.fromDate(date),
+                            pendingJourneyDate: null,
+                            journeyDateStatus: 'confirmed',
+                        });
+                        // Notify trainer
+                        const trainerId = (clientProfile as any)?.trainerId;
+                        if (trainerId && user) {
+                            await sendJourneyDateMessage(
+                                { uid: userId, displayName: user.displayName },
+                                trainerId, date, userId,
+                                clientProfile?.name || user.displayName || 'Client', 'client'
+                            );
+                        }
+                        fetchData();
+                        Alert.alert('Updated!', `Journey start date set to ${format(date, 'MMMM d, yyyy')}.`);
+                    } catch (e) {
+                        Alert.alert('Error', 'Could not update date.');
+                    }
+                }}
+                initialDate={
+                    (clientProfile as any)?.journeyStartDate?.toDate?.() ||
+                    (clientProfile as any)?.pendingJourneyDate?.toDate?.() ||
+                    new Date()
+                }
+                title="Edit Journey Start Date"
+                maxDate={new Date()}
+            />
         </View >
     );
 }

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from './AuthContext';
+import { usePresence } from '../hooks/usePresence';
 
 interface ChatContextType {
     totalUnreadCount: number;
@@ -19,6 +20,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     const { user } = useAuth();
     const [totalUnreadCount, setTotalUnreadCount] = useState(0);
     const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+
+    // Keep current user's presence alive while app is running
+    usePresence();
 
     useEffect(() => {
         setTotalUnreadCount(0);

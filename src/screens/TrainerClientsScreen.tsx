@@ -4,9 +4,9 @@ import tw from 'twrnc';
 import { COLORS } from '../constants/theme';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Search, Plus, Filter, ChevronRight, Activity, Clock, MoreVertical } from 'lucide-react-native';
+import { Search, Plus, Filter, ChevronRight, Activity, Clock, MoreVertical, ArrowDownAZ, ArrowUpAZ, AlertCircle, X } from 'lucide-react-native';
 import { db } from '../lib/firebase';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 
 const DEMO_EMAIL = 'nikhilbollineni11@gmail.com';
@@ -27,7 +27,9 @@ export default function TrainerClientsScreen() {
     const [searchQuery, setSearchQuery] = useState('');
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
+    const [filter, setFilter] = useState<'all' | 'active' | 'inactive' | 'needs-review'>('all');
+    const [sortOrder, setSortOrder] = useState<'default' | 'a-z' | 'z-a'>('default');
+    const [showFilterPanel, setShowFilterPanel] = useState(false);
 
     const fetchClients = useCallback(async () => {
         if (!user?.uid) return;
@@ -49,6 +51,7 @@ export default function TrainerClientsScreen() {
                     collection(db, 'plans'),
                     where('clientId', '==', docSnap.id),
                     orderBy('createdAt', 'desc'),
+                    limit(1),
                 );
 
                 let planName = 'No Plan Assigned';
@@ -74,12 +77,50 @@ export default function TrainerClientsScreen() {
 
 
 
+            // Fetch unreviewed workout logs for all clients
+            const clientIds = clientsList.map(c => c.id);
+            const unreviewedMap: Record<string, Date> = {};
+            for (let i = 0; i < clientIds.length; i += 30) {
+                const batch = clientIds.slice(i, i + 30);
+                try {
+                    const logsQuery = query(
+                        collection(db, 'workoutLogs'),
+                        where('clientId', 'in', batch),
+                        where('status', '==', 'completed'),
+                        limit(500),
+                    );
+                    const logsSnap = await getDocs(logsQuery);
+                    logsSnap.docs.forEach(d => {
+                        const data = d.data();
+                        if (!data.reviewed) {
+                            const createdAt = data.createdAt?.toDate?.() || new Date();
+                            // Keep the earliest unreviewed workout date per client
+                            if (!unreviewedMap[data.clientId] || createdAt < unreviewedMap[data.clientId]) {
+                                unreviewedMap[data.clientId] = createdAt;
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.log('Error fetching unreviewed logs batch:', e);
+                }
+            }
+
+            // Attach review status to each client
+            clientsList.forEach((c: any) => {
+                c.hasUnreviewedWorkout = !!unreviewedMap[c.id];
+                c.earliestUnreviewedAt = unreviewedMap[c.id] || null;
+            });
+
             // INJECT MOCK DATA FOR DEMO USER
             if (user.email === DEMO_EMAIL) {
-                // Remove duplicates if any mock IDs clash (unlikely)
                 const mockData = MOCK_CLIENTS.map(mc => ({
                     ...mc,
-                    compliance: 85, // Add missing fields
+                    compliance: 85,
+                    hasUnreviewedWorkout: mc.id === 'mock1' || mc.id === 'mock2' || mc.id === 'mock4',
+                    earliestUnreviewedAt: mc.id === 'mock4' ? new Date(Date.now() - 72 * 3600000)
+                        : mc.id === 'mock1' ? new Date(Date.now() - 2 * 3600000)
+                        : mc.id === 'mock2' ? new Date(Date.now() - 5 * 3600000)
+                        : null,
                 }));
                 setClients([...clientsList, ...mockData]);
             } else {
@@ -105,10 +146,26 @@ export default function TrainerClientsScreen() {
         fetchClients();
     };
 
-    const filteredClients = clients.filter(client =>
-        client.name?.toLowerCase().includes(searchQuery.toLowerCase()) &&
-        (filter === 'all' || client.status === filter)
-    );
+    const filteredClients = clients
+        .filter(client => {
+            const matchesSearch = client.name?.toLowerCase().includes(searchQuery.toLowerCase());
+            if (filter === 'needs-review') return matchesSearch && client.hasUnreviewedWorkout;
+            if (filter === 'active' || filter === 'inactive') return matchesSearch && client.status === filter;
+            return matchesSearch; // 'all'
+        })
+        .sort((a, b) => {
+            // "Needs Review" filter: sort by earliest unreviewed workout (oldest first)
+            if (filter === 'needs-review') {
+                const dateA = a.earliestUnreviewedAt ? a.earliestUnreviewedAt.getTime() : Infinity;
+                const dateB = b.earliestUnreviewedAt ? b.earliestUnreviewedAt.getTime() : Infinity;
+                return dateA - dateB;
+            }
+            if (sortOrder === 'a-z') return (a.name || '').localeCompare(b.name || '');
+            if (sortOrder === 'z-a') return (b.name || '').localeCompare(a.name || '');
+            return 0; // default order
+        });
+
+    const activeFilterCount = (filter !== 'all' ? 1 : 0) + (sortOrder !== 'default' ? 1 : 0);
 
     const getStatusColor = (status: string) => {
         switch (status) {
@@ -138,7 +195,7 @@ export default function TrainerClientsScreen() {
                 </View>
 
                 {/* Search & Filter */}
-                <View style={tw`flex-row gap-3 mb-6`}>
+                <View style={tw`flex-row gap-3 mb-4`}>
                     <View style={tw`flex-1 flex-row items-center bg-[${COLORS.backgroundLight}] rounded-xl px-4 border border-white/5 h-12`}>
                         <Search size={20} color="#94a3b8" />
                         <TextInput
@@ -151,10 +208,83 @@ export default function TrainerClientsScreen() {
                             autoCapitalize="none"
                         />
                     </View>
-                    <TouchableOpacity style={tw`w-12 h-12 bg-[${COLORS.backgroundLight}] rounded-xl items-center justify-center border border-white/5`}>
-                        <Filter size={20} color={COLORS.primary} />
+                    <TouchableOpacity
+                        onPress={() => setShowFilterPanel(!showFilterPanel)}
+                        style={tw`w-12 h-12 rounded-xl items-center justify-center border ${showFilterPanel || activeFilterCount > 0 ? `bg-[${COLORS.primary}]/15 border-[${COLORS.primary}]/30` : `bg-[${COLORS.backgroundLight}] border-white/5`}`}
+                    >
+                        <Filter size={20} color={activeFilterCount > 0 ? COLORS.primary : '#94a3b8'} />
+                        {activeFilterCount > 0 && (
+                            <View style={tw`absolute -top-1 -right-1 w-4.5 h-4.5 bg-[${COLORS.primary}] rounded-full items-center justify-center`}>
+                                <Text style={tw`text-black text-[9px] font-black`}>{activeFilterCount}</Text>
+                            </View>
+                        )}
                     </TouchableOpacity>
                 </View>
+
+                {/* Filter Panel */}
+                {showFilterPanel && (
+                    <View style={tw`bg-[${COLORS.backgroundLight}] rounded-2xl border border-white/5 p-4 mb-4`}>
+                        {/* Sort Section */}
+                        <View style={tw`mb-4`}>
+                            <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-2.5`}>Sort By</Text>
+                            <View style={tw`flex-row gap-2`}>
+                                {([
+                                    { key: 'default', label: 'Default', icon: null },
+                                    { key: 'a-z', label: 'A → Z', icon: ArrowDownAZ },
+                                    { key: 'z-a', label: 'Z → A', icon: ArrowUpAZ },
+                                ] as const).map(opt => {
+                                    const isActive = sortOrder === opt.key;
+                                    return (
+                                        <TouchableOpacity
+                                            key={opt.key}
+                                            onPress={() => setSortOrder(opt.key)}
+                                            style={tw`flex-row items-center gap-1.5 px-3.5 py-2 rounded-xl border ${isActive ? `bg-[${COLORS.primary}]/15 border-[${COLORS.primary}]/30` : 'bg-white/5 border-white/5'}`}
+                                        >
+                                            {opt.icon && <opt.icon size={13} color={isActive ? COLORS.primary : '#64748b'} />}
+                                            <Text style={tw`text-xs font-bold ${isActive ? `text-[${COLORS.primary}]` : 'text-slate-400'}`}>{opt.label}</Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+                        </View>
+
+                        {/* Filter Section */}
+                        <View>
+                            <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-2.5`}>Filter</Text>
+                            <View style={tw`flex-row flex-wrap gap-2`}>
+                                {([
+                                    { key: 'all', label: 'All Clients', color: COLORS.primary },
+                                    { key: 'active', label: 'Active', color: '#22c55e' },
+                                    { key: 'inactive', label: 'Inactive', color: '#ef4444' },
+                                    { key: 'needs-review', label: 'Needs Review', color: '#f97316' },
+                                ] as const).map(opt => {
+                                    const isActive = filter === opt.key;
+                                    return (
+                                        <TouchableOpacity
+                                            key={opt.key}
+                                            onPress={() => setFilter(opt.key)}
+                                            style={tw`flex-row items-center gap-1.5 px-3.5 py-2 rounded-xl border ${isActive ? 'bg-white/10 border-white/20' : 'bg-white/5 border-white/5'}`}
+                                        >
+                                            <View style={[tw`w-2 h-2 rounded-full`, { backgroundColor: opt.color }]} />
+                                            <Text style={tw`text-xs font-bold ${isActive ? 'text-white' : 'text-slate-400'}`}>{opt.label}</Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+                        </View>
+
+                        {/* Clear All */}
+                        {activeFilterCount > 0 && (
+                            <TouchableOpacity
+                                onPress={() => { setFilter('all'); setSortOrder('default'); }}
+                                style={tw`flex-row items-center justify-center gap-1.5 mt-4 pt-3 border-t border-white/5`}
+                            >
+                                <X size={12} color="#ef4444" />
+                                <Text style={tw`text-red-400 text-xs font-bold`}>Clear All Filters</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                )}
 
                 {/* Error Banner */}
                 {error && !loading && (
@@ -211,9 +341,17 @@ export default function TrainerClientsScreen() {
                                     <Text numberOfLines={1} style={tw`text-slate-400 text-xs mt-0.5`}>{client.plan}</Text>
                                 </View>
 
-                                {/* Action */}
-                                <View style={tw`w-8 h-8 rounded-full bg-white/5 items-center justify-center`}>
-                                    <ChevronRight size={16} color="#64748b" />
+                                {/* Review Badge + Action */}
+                                <View style={tw`items-end gap-1.5`}>
+                                    {client.hasUnreviewedWorkout && (
+                                        <View style={tw`flex-row items-center gap-1 bg-orange-500/10 px-2 py-0.5 rounded-full border border-orange-500/20`}>
+                                            <AlertCircle size={10} color="#f97316" />
+                                            <Text style={tw`text-orange-400 text-[9px] font-bold`}>Review</Text>
+                                        </View>
+                                    )}
+                                    <View style={tw`w-8 h-8 rounded-full bg-white/5 items-center justify-center`}>
+                                        <ChevronRight size={16} color="#64748b" />
+                                    </View>
                                 </View>
                             </View>
 

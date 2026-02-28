@@ -2,14 +2,17 @@ import React, { useState, useEffect, useCallback, useLayoutEffect } from 'react'
 import { View, Text, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GiftedChat, Bubble, InputToolbar, Send } from 'react-native-gifted-chat';
-import { collection, addDoc, onSnapshot, query, orderBy, Timestamp, updateDoc, doc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, Timestamp, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import tw from 'twrnc';
 import { COLORS } from '../constants/theme';
-import { ArrowLeft, Send as SendIcon, Dumbbell, Bell } from 'lucide-react-native';
+import { ArrowLeft, Send as SendIcon, Dumbbell, Bell, Calendar, Check, Pencil, CheckCheck } from 'lucide-react-native';
 import { getDoc } from 'firebase/firestore';
+import { format } from 'date-fns';
+import DatePickerModal from '../components/DatePickerModal';
+import { useUserPresence } from '../hooks/usePresence';
 
 
 // --- Mock Data ---
@@ -34,16 +37,34 @@ export default function ChatScreen() {
     const { user } = useAuth();
     const navigation = useNavigation<any>();
     const route = useRoute<any>();
-    const { chatId, title } = route.params;
+    const { chatId, title: paramTitle } = (route.params as any) || {};
     const insets = useSafeAreaInsets();
     const [messages, setMessages] = useState<any[]>([]);
     const [recipientId, setRecipientId] = useState<string | null>(null);
+    const [resolvedTitle, setResolvedTitle] = useState<string>(paramTitle || '');
+
+    // Presence & Read Receipts
+    const [recipientLastRead, setRecipientLastRead] = useState<Date | null>(null);
+    const presence = useUserPresence(recipientId);
+
+    // Journey date picker state (lifted from renderBubble)
+    const [showJourneyPicker, setShowJourneyPicker] = useState(false);
+    const [journeyEditContext, setJourneyEditContext] = useState<{
+        messageId: string;
+        proposedDate: string;
+        clientId: string;
+    } | null>(null);
 
     useLayoutEffect(() => {
         navigation.setOptions({
             headerShown: false, // Custom header
         });
     }, [navigation]);
+
+    // Sync title from navigation params when they change
+    useEffect(() => {
+        if (paramTitle) setResolvedTitle(paramTitle);
+    }, [paramTitle]);
 
     useEffect(() => {
         if (chatId.startsWith('mock') && user) {
@@ -89,12 +110,51 @@ export default function ChatScreen() {
             if (chatDoc.exists()) {
                 const data = chatDoc.data();
                 const other = (data.participants || []).find((p: string) => p !== user?.uid);
-                if (other) setRecipientId(other);
+                if (other) {
+                    setRecipientId(other);
+                    // Resolve chat title from participantNames if not provided via params
+                    if (!paramTitle && data.participantNames?.[other]) {
+                        setResolvedTitle(data.participantNames[other]);
+                    }
+                }
             }
         })();
 
         return () => { isMounted = false; unsubscribe(); };
     }, [chatId, user?.uid]);
+
+    // ─── Read Receipts: listen for recipient's lastRead & update own lastRead ───
+    useEffect(() => {
+        if (!chatId || chatId.startsWith('mock') || !user?.uid) return;
+
+        // Mark chat as read (update my lastRead timestamp)
+        const chatRef = doc(db, 'chats', chatId);
+        updateDoc(chatRef, {
+            [`lastRead.${user.uid}`]: serverTimestamp(),
+        }).catch(() => {});
+
+        // Listen for the other user's lastRead
+        const unsubscribe = onSnapshot(chatRef, (snap) => {
+            if (snap.exists()) {
+                const data = snap.data();
+                if (recipientId && data.lastRead?.[recipientId]) {
+                    const ts = data.lastRead[recipientId];
+                    if (ts?.toDate) setRecipientLastRead(ts.toDate());
+                }
+            }
+        }, () => {});
+
+        return () => unsubscribe();
+    }, [chatId, user?.uid, recipientId]);
+
+    // Update lastRead whenever new messages arrive (user is viewing them)
+    useEffect(() => {
+        if (!chatId || chatId.startsWith('mock') || !user?.uid || messages.length === 0) return;
+        const chatRef = doc(db, 'chats', chatId);
+        updateDoc(chatRef, {
+            [`lastRead.${user.uid}`]: serverTimestamp(),
+        }).catch(() => {});
+    }, [messages.length]);
 
     const onSend = useCallback(async (newMessages = []) => {
         // INJECT MOCK SEND
@@ -261,8 +321,10 @@ export default function ChatScreen() {
                 <View style={[tw`mb-2 flex-row w-full px-2`, alignmentStyle]}>
                     <TouchableOpacity
                         onPress={() => navigation.navigate('WorkoutView', {
-                            workoutData: { id: currentMessage.metadata.workoutId },
-                            workoutId: currentMessage.metadata.workoutId,
+                            workoutData: {
+                                id: currentMessage.metadata.workoutId,
+                                title: currentMessage.metadata.workoutTitle,
+                            },
                             mode: 'review'
                         })}
                         style={[tw`rounded-2xl overflow-hidden border w-64`, cardBg, isMyMessage ? tw`border-[${COLORS.primary}]/30` : tw`border-white/10`]}
@@ -291,7 +353,6 @@ export default function ChatScreen() {
                                     <Text style={tw`text-white font-bold`}>{currentMessage.metadata.totalLoad}kg</Text>
                                     <Text style={tw`text-slate-500 text-[8px] uppercase`}>Vol</Text>
                                 </View>
-                                {/* Add more stats if needed */}
                             </View>
                         </View>
 
@@ -304,39 +365,170 @@ export default function ChatScreen() {
             );
         }
 
+        // ─── JOURNEY DATE PROPOSAL CARD ───
+        const isJourneyDateProposal = currentMessage.metadata?.type === 'journey_date_proposal';
+        if (isJourneyDateProposal) {
+            const proposedDate = currentMessage.metadata?.proposedDate;
+            const proposedByRole = currentMessage.metadata?.proposedByRole;
+            const clientId = currentMessage.metadata?.clientId;
+            let displayDate = '';
+            try { displayDate = format(new Date(proposedDate), 'MMMM d, yyyy'); } catch { displayDate = proposedDate; }
+
+            const handleAcceptJourneyDate = async () => {
+                if (!clientId || !user?.uid) return;
+                try {
+                    const profileRef = doc(db, 'clientProfiles', clientId);
+                    await updateDoc(profileRef, {
+                        journeyStartDate: Timestamp.fromDate(new Date(proposedDate)),
+                        pendingJourneyDate: null,
+                        journeyDateStatus: 'confirmed',
+                    });
+                    // Send confirmation message
+                    const confirmText = `✅ I've confirmed ${displayDate} as our journey start date!`;
+                    await addDoc(collection(db, 'chats', chatId, 'messages'), {
+                        _id: Date.now().toString(),
+                        text: confirmText,
+                        user: { _id: user.uid, name: user.displayName || 'Client' },
+                        createdAt: serverTimestamp(),
+                    });
+                    await updateDoc(doc(db, 'chats', chatId), { lastMessage: confirmText, updatedAt: serverTimestamp() });
+                    Alert.alert('Confirmed!', `Journey start date set to ${displayDate}.`);
+                } catch (error) {
+                    console.error('Error accepting journey date:', error);
+                    Alert.alert('Error', 'Failed to confirm date.');
+                }
+            };
+
+            const handleEditJourneyDate = () => {
+                setJourneyEditContext({ messageId: currentMessage._id, proposedDate, clientId });
+                setShowJourneyPicker(true);
+            };
+
+            return (
+                <View style={[tw`mb-2 flex-row w-full px-2`, alignmentStyle]}>
+                    <View style={[tw`rounded-2xl overflow-hidden border w-64`, isMyMessage ? tw`bg-[#1e293b] border-purple-500/30` : tw`bg-slate-800 border-purple-500/20`]}>
+                        {/* Header */}
+                        <View style={tw`bg-purple-500/10 p-3 border-b border-purple-500/10 flex-row justify-between items-center`}>
+                            <View style={tw`flex-row items-center gap-2`}>
+                                <Calendar size={14} color="#c084fc" />
+                                <Text style={tw`text-purple-400 font-bold text-xs uppercase tracking-wider`}>Journey Date</Text>
+                            </View>
+                            <Text style={tw`text-slate-400 text-[10px]`}>
+                                {currentMessage.createdAt ? new Date(currentMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </Text>
+                        </View>
+
+                        {/* Content */}
+                        <View style={tw`p-4`}>
+                            <Text style={tw`text-white font-bold text-lg mb-1`}>📅 {displayDate}</Text>
+                            <Text style={tw`text-slate-400 text-xs`}>
+                                {isMyMessage
+                                    ? (proposedByRole === 'trainer'
+                                        ? 'You proposed this as the journey start date.'
+                                        : 'You updated the journey start date.')
+                                    : (proposedByRole === 'trainer'
+                                        ? 'Your coach proposed this as your journey start date.'
+                                        : `${currentMessage.metadata?.clientName || 'Client'} updated their journey start date.`)
+                                }
+                            </Text>
+                        </View>
+
+                        {/* Footer */}
+                        {!isMyMessage && proposedByRole === 'trainer' ? (
+                            <View style={tw`p-3 border-t border-white/5 flex-row gap-2`}>
+                                <TouchableOpacity
+                                    onPress={handleAcceptJourneyDate}
+                                    style={tw`flex-1 bg-[${COLORS.primary}] py-2.5 rounded-xl items-center flex-row justify-center gap-1.5`}
+                                >
+                                    <Check size={14} color="black" />
+                                    <Text style={tw`text-black font-bold text-xs`}>Accept</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={handleEditJourneyDate}
+                                    style={tw`flex-1 bg-white/5 border border-white/10 py-2.5 rounded-xl items-center flex-row justify-center gap-1.5`}
+                                >
+                                    <Pencil size={12} color="#c084fc" />
+                                    <Text style={tw`text-purple-400 font-bold text-xs`}>Edit</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <View style={tw`bg-black/20 p-3 items-center border-t border-white/5`}>
+                                <Text style={tw`text-purple-400 font-bold text-xs`}>
+                                    {isMyMessage ? 'Proposal Sent ✓' : 'Date Updated ✓'}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                </View>
+            );
+        }
+
+        // ─── Read receipt ticks for sent messages ───
+        const isRight = currentMessage.user?._id === user?.uid;
+        const msgTime = currentMessage.createdAt instanceof Date
+            ? currentMessage.createdAt.getTime()
+            : new Date(currentMessage.createdAt).getTime();
+        const isSeen = isRight && recipientLastRead && recipientLastRead.getTime() >= msgTime;
+
         return (
-            <Bubble
-                {...props}
-                wrapperStyle={{
-                    right: {
-                        backgroundColor: COLORS.primary,
-                        borderBottomRightRadius: 0,
-                        marginBottom: 4,
-                        padding: 4,
-                    },
-                    left: {
-                        backgroundColor: '#1e293b', // slate-800
-                        borderBottomLeftRadius: 0,
-                        marginBottom: 4,
-                        padding: 4,
-                    },
-                }}
-                textStyle={{
-                    right: { color: '#000', fontSize: 15 },
-                    left: { color: '#fff', fontSize: 15 },
-                }}
-                timeTextStyle={{
-                    right: { color: 'rgba(0,0,0,0.5)' },
-                    left: { color: '#94a3b8' }
-                }}
-            />
+            <View>
+                <Bubble
+                    {...props}
+                    wrapperStyle={{
+                        right: {
+                            backgroundColor: COLORS.primary,
+                            borderRadius: 18,
+                            borderBottomRightRadius: 4,
+                            marginBottom: 2,
+                            paddingHorizontal: 2,
+                            paddingVertical: 2,
+                        },
+                        left: {
+                            backgroundColor: '#1e293b',
+                            borderRadius: 18,
+                            borderBottomLeftRadius: 4,
+                            marginBottom: 2,
+                            paddingHorizontal: 2,
+                            paddingVertical: 2,
+                        },
+                    }}
+                    textStyle={{
+                        right: { color: '#000', fontSize: 15, lineHeight: 20 },
+                        left: { color: '#f1f5f9', fontSize: 15, lineHeight: 20 },
+                    }}
+                    timeTextStyle={{
+                        right: { color: 'rgba(0,0,0,0.45)', fontSize: 10 },
+                        left: { color: '#64748b', fontSize: 10 },
+                    }}
+                    renderTicks={(message: any) => {
+                        if (message.user?._id !== user?.uid) return null;
+                        const mTime = message.createdAt instanceof Date
+                            ? message.createdAt.getTime()
+                            : new Date(message.createdAt).getTime();
+                        const seen = recipientLastRead && recipientLastRead.getTime() >= mTime;
+                        return (
+                            <View style={tw`mr-1 mb-0.5`}>
+                                <CheckCheck size={14} color={seen ? '#000' : 'rgba(0,0,0,0.3)'} />
+                            </View>
+                        );
+                    }}
+                />
+            </View>
         );
-    }, [user?.uid, navigation]);
+    }, [user?.uid, navigation, recipientLastRead]);
 
     const renderSend = (props: any) => (
-        <Send {...props}>
-            <View style={tw`bg-[${COLORS.primary}] w-10 h-10 rounded-full items-center justify-center mr-2 mb-1`}>
-                <SendIcon color="#000" size={20} fill="#000" />
+        <Send {...props} containerStyle={{ justifyContent: 'center' }}>
+            <View style={{
+                backgroundColor: COLORS.primary,
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginRight: 6,
+            }}>
+                <SendIcon color="#000" size={18} fill="#000" />
             </View>
         </Send>
     );
@@ -345,19 +537,20 @@ export default function ChatScreen() {
         <InputToolbar
             {...props}
             containerStyle={{
-                backgroundColor: '#0f172a', // slate-900
-                borderTopWidth: 0,
-                paddingHorizontal: 10,
-                paddingTop: 10,
-                paddingBottom: Math.max(10, insets.bottom + 6),
+                backgroundColor: COLORS.backgroundLight,
+                borderTopWidth: 1,
+                borderTopColor: 'rgba(255,255,255,0.05)',
+                paddingHorizontal: 8,
+                paddingTop: 8,
+                paddingBottom: Math.max(8, insets.bottom + 4),
             }}
             primaryStyle={{
-                backgroundColor: '#1e293b', // slate-800
-                borderRadius: 25,
-                paddingHorizontal: 10,
+                backgroundColor: '#0f172a',
+                borderRadius: 24,
+                paddingHorizontal: 12,
                 alignItems: 'center',
                 borderWidth: 1,
-                borderColor: '#334155'
+                borderColor: 'rgba(255,255,255,0.08)',
             }}
         />
     );
@@ -365,21 +558,31 @@ export default function ChatScreen() {
     return (
         <View style={tw`flex-1 bg-[${COLORS.background}]`}>
             {/* Custom Header */}
-            <View style={[tw`pb-4 px-4 bg-slate-900 border-b border-white/5 flex-row items-center shadow-lg shadow-black/50`, { paddingTop: Math.max(insets.top, 20) + 14 }]}>
+            <View style={[tw`pb-4 px-4 bg-[${COLORS.backgroundLight}] border-b border-white/5 flex-row items-center`, { paddingTop: Math.max(insets.top, 20) + 14 }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={tw`mr-3 p-2 -ml-2`}>
-                    <ArrowLeft color="white" size={24} />
+                    <ArrowLeft color="white" size={22} />
                 </TouchableOpacity>
 
-                <View style={tw`w-10 h-10 rounded-full bg-slate-700 items-center justify-center mr-3 border border-white/10 overflow-hidden`}>
-                    <Text style={tw`text-white font-bold`}>{title ? title.charAt(0) : '?'}</Text>
+                <View style={tw`relative`}>
+                    <View style={tw`w-11 h-11 rounded-full bg-slate-700 items-center justify-center mr-3 border border-white/10`}>
+                        <Text style={tw`text-white font-bold text-lg`}>{resolvedTitle ? resolvedTitle.charAt(0).toUpperCase() : '?'}</Text>
+                    </View>
+                    {/* Real presence dot */}
+                    <View style={[
+                        tw`absolute bottom-0 right-2.5 w-3 h-3 rounded-full border-2`,
+                        { borderColor: COLORS.backgroundLight },
+                        presence.isOnline ? tw`bg-green-500` : tw`bg-slate-500`,
+                    ]} />
                 </View>
 
                 <View>
-                    <Text style={tw`text-white font-bold text-lg`}>{title || 'Chat'}</Text>
-                    <View style={tw`flex-row items-center`}>
-                        <View style={tw`w-2 h-2 rounded-full bg-green-500 mr-1.5`} />
-                        <Text style={tw`text-green-500 text-xs font-bold`}>Online</Text>
-                    </View>
+                    <Text style={tw`text-white font-bold text-base`}>{resolvedTitle || 'Chat'}</Text>
+                    <Text style={[
+                        tw`text-xs font-medium`,
+                        presence.isOnline ? tw`text-green-400` : tw`text-slate-500`,
+                    ]}>
+                        {presence.statusText}
+                    </Text>
                 </View>
             </View>
 
@@ -394,15 +597,57 @@ export default function ChatScreen() {
                     user={{
                         _id: user?.uid || 'guest',
                         name: user?.displayName || 'User',
-                        avatar: 'https://ui-avatars.com/api/?name=User&background=random',
                     }}
                     renderBubble={renderBubble}
                     renderSend={renderSend}
                     renderInputToolbar={renderInputToolbar}
-                    minInputToolbarHeight={60}
-                    isKeyboardInternallyHandled={false}
+                    minInputToolbarHeight={56}
                 />
             </KeyboardAvoidingView>
+
+            {/* Journey Date Picker Modal (for editing proposed date) */}
+            <DatePickerModal
+                visible={showJourneyPicker}
+                onClose={() => { setShowJourneyPicker(false); setJourneyEditContext(null); }}
+                onSelect={async (date) => {
+                    if (!journeyEditContext || !user?.uid) return;
+                    try {
+                        const { clientId } = journeyEditContext;
+                        const profileRef = doc(db, 'clientProfiles', clientId);
+                        await updateDoc(profileRef, {
+                            journeyStartDate: Timestamp.fromDate(date),
+                            pendingJourneyDate: null,
+                            journeyDateStatus: 'confirmed',
+                        });
+                        // Send update message
+                        const formattedDate = format(date, 'MMMM d, yyyy');
+                        const updateText = `📅 I've updated my journey start date to ${formattedDate}.`;
+                        await addDoc(collection(db, 'chats', chatId, 'messages'), {
+                            _id: Date.now().toString(),
+                            text: updateText,
+                            user: { _id: user.uid, name: user.displayName || 'Client' },
+                            createdAt: serverTimestamp(),
+                            metadata: {
+                                type: 'journey_date_proposal',
+                                proposedDate: date.toISOString(),
+                                proposedBy: user.uid,
+                                proposedByRole: 'client',
+                                clientId,
+                                clientName: user.displayName || 'Client',
+                            },
+                        });
+                        await updateDoc(doc(db, 'chats', chatId), { lastMessage: updateText, updatedAt: serverTimestamp() });
+                        Alert.alert('Updated!', `Journey start date changed to ${formattedDate}.`);
+                    } catch (error) {
+                        console.error('Error updating journey date:', error);
+                        Alert.alert('Error', 'Failed to update date.');
+                    }
+                    setJourneyEditContext(null);
+                }}
+                initialDate={journeyEditContext?.proposedDate ? new Date(journeyEditContext.proposedDate) : new Date()}
+                title="Edit Journey Start Date"
+                maxDate={new Date()}
+            />
         </View>
     );
 }

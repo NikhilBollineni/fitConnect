@@ -1,7 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, Text, Platform, TouchableOpacity } from 'react-native';
-import { Dumbbell, Calendar, BarChart3, MessageCircle, Home, Plus, Users } from 'lucide-react-native';
+import { Dumbbell, Calendar, BarChart3, MessageCircle, Home, Plus, ClipboardList } from 'lucide-react-native';
 import tw from 'twrnc';
 import { COLORS } from '../constants/theme';
 import { BlurView } from 'expo-blur';
@@ -10,10 +10,12 @@ import * as Haptics from 'expo-haptics';
 
 // Screens
 import ClientDashboard from '../screens/ClientDashboard';
+import ProgramScreen from '../screens/ProgramScreen';
 import ProgressScreen from '../screens/ProgressScreen';
 import ChatListScreen from '../screens/ChatListScreen';
 import LogWorkoutScreen from '../screens/LogWorkoutScreen';
-import TrainerRequestsScreen from '../screens/TrainerRequestsScreen';
+// TrainerRequestsScreen removed from tabs — coaching requests are shown
+// as an inline banner on the ClientDashboard for solo users.
 
 import { useAuth } from '../context/AuthContext';
 import { useChat } from '../context/ChatContext';
@@ -140,10 +142,10 @@ export default function MemberTabs() {
                     }}
                 />
                 <Tab.Screen
-                    name="Progress"
-                    component={ProgressScreen}
+                    name="Program"
+                    component={ProgramScreen}
                     options={{
-                        tabBarIcon: ({ color, size }) => <BarChart3 size={size} color={color} />,
+                        tabBarIcon: ({ color, size }) => <ClipboardList size={size} color={color} />,
                     }}
                 />
                 <Tab.Screen
@@ -162,6 +164,13 @@ export default function MemberTabs() {
                                 <Plus size={28} color="black" strokeWidth={3} />
                             </View>
                         ),
+                    }}
+                />
+                <Tab.Screen
+                    name="Progress"
+                    component={ProgressScreen}
+                    options={{
+                        tabBarIcon: ({ color, size }) => <BarChart3 size={size} color={color} />,
                     }}
                 />
                 <Tab.Screen
@@ -192,13 +201,6 @@ export default function MemberTabs() {
                                 <MessageCircle size={size} color={color} />
                             </View>
                         ),
-                    }}
-                />
-                <Tab.Screen
-                    name="Requests"
-                    component={TrainerRequestsScreen}
-                    options={{
-                        tabBarIcon: ({ color, size }) => <Users size={size} color={color} />,
                     }}
                 />
             </Tab.Navigator>

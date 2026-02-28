@@ -28,6 +28,7 @@ export type RootStackParamList = {
     WorkoutSummary: { summary: { workoutName?: string; duration?: string; exercises?: any[]; totalVolume?: number; [key: string]: any } };
     Program: undefined;
     AIGenerator: undefined;
+    EditPlan: { clientId: string; clientName: string; selectedDay?: string; isSolo?: boolean };
 };
 
 export type RootStackScreenProps<T extends keyof RootStackParamList> = NativeStackScreenProps<RootStackParamList, T>;

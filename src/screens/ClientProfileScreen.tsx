@@ -6,11 +6,14 @@ import {
 import tw from 'twrnc';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { COLORS } from '../constants/theme';
-import { ArrowLeft, Save, User, Loader, Database, Link, ChevronRight, LogOut, MessageSquare } from 'lucide-react-native';
+import { ArrowLeft, Save, User, Loader, Database, Link, ChevronRight, LogOut, MessageSquare, Calendar, Pencil, Check } from 'lucide-react-native';
 import { db } from '../lib/firebase';
-import { doc, getDoc, setDoc, Timestamp, collection, writeBatch, query, where, getDocs, updateDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, Timestamp, collection, writeBatch, query, where, getDocs, updateDoc, deleteDoc, addDoc, serverTimestamp, limit } from 'firebase/firestore';
 import { seedMockData } from '../utils/mockData';
 import { useAuth } from '../context/AuthContext';
+import { format } from 'date-fns';
+import DatePickerModal from '../components/DatePickerModal';
+import { sendJourneyDateMessage } from '../utils/journeyDate';
 
 // ------------------------------------------------------------------
 // ClientProfileScreen — Manage profile & visibility settings
@@ -45,6 +48,12 @@ export default function ClientProfileScreen() {
     const [isVisible, setIsVisible] = useState(false);
     const [weightUnit, setWeightUnit] = useState('lbs');
 
+    // Journey Date
+    const [journeyDate, setJourneyDate] = useState<Date | null>(null);
+    const [pendingJourney, setPendingJourney] = useState<Date | null>(null);
+    const [journeyStatus, setJourneyStatus] = useState<string>('none');
+    const [showJourneyPicker, setShowJourneyPicker] = useState(false);
+
     const CLIENT_ID = user?.uid ?? '';
 
     useFocusEffect(
@@ -72,6 +81,11 @@ export default function ClientProfileScreen() {
                 setExperience(data.experience || 'Beginner');
                 setIsVisible(data.isVisibleToTrainers || false);
                 setWeightUnit(data.preferredWeightUnit || 'lbs');
+
+                // Journey date
+                setJourneyDate(data.journeyStartDate?.toDate?.() || null);
+                setPendingJourney(data.pendingJourneyDate?.toDate?.() || null);
+                setJourneyStatus(data.journeyDateStatus || 'none');
 
                 // Link Trainer
                 const tId = data.trainerId || null;
@@ -157,8 +171,7 @@ export default function ClientProfileScreen() {
 
             navigation.navigate('Chat', {
                 chatId: targetChatId,
-                clientName: trainerData?.name || 'Coach',
-                clientId: currentTrainerId
+                title: trainerData?.name || 'Coach',
             });
 
         } catch (error) {
@@ -186,7 +199,7 @@ export default function ClientProfileScreen() {
                 experience,
                 isVisibleToTrainers: isVisible,
                 preferredWeightUnit: weightUnit,
-                updatedAt: Timestamp.now(),
+                updatedAt: serverTimestamp(),
             }, { merge: true });
 
             Alert.alert('Profile Saved', 'Your profile has been updated successfully.');
@@ -213,7 +226,8 @@ export default function ClientProfileScreen() {
             const q = query(
                 collection(db, 'clientProfiles'),
                 where('inviteCode', '==', normalizedCode),
-                where('isClaimed', '==', false)
+                where('isClaimed', '==', false),
+                limit(1)
             );
             const snapshot = await getDocs(q);
 
@@ -239,14 +253,14 @@ export default function ClientProfileScreen() {
                 dietPlan: inviteData.dietPlan || null,
                 exercisePlan: inviteData.exercisePlan || null,
                 isVisibleToTrainers: true, // Auto-enable visibility so trainer can see them
-                updatedAt: Timestamp.now(),
+                updatedAt: serverTimestamp(),
             };
 
             // 3. Mark the invite profile as claimed (and by whom)
             // We do NOT delete it yet to keep a record, but in a real app we might merge/delete.
             const updatesForInviteProfile = {
                 isClaimed: true,
-                claimedAt: Timestamp.now(),
+                claimedAt: serverTimestamp(),
                 claimedBy: CLIENT_ID, // Track who claimed it
                 status: 'claimed'
             };
@@ -363,6 +377,71 @@ export default function ClientProfileScreen() {
                                         Coach manages your plan & visibility
                                     </Text>
                                 </View>
+                            </View>
+
+                            {/* Journey Start Date */}
+                            <View style={tw`mt-4 pt-4 border-t border-[${COLORS.primary}]/10`}>
+                                <View style={tw`flex-row items-center justify-between`}>
+                                    <View style={tw`flex-row items-center gap-2`}>
+                                        <Calendar size={16} color="#c084fc" />
+                                        <Text style={tw`text-slate-400 text-xs font-bold uppercase`}>Journey Start Date</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        onPress={() => setShowJourneyPicker(true)}
+                                        style={tw`flex-row items-center gap-1 px-2 py-1 rounded-full bg-white/5`}
+                                    >
+                                        <Pencil size={10} color="#c084fc" />
+                                        <Text style={tw`text-purple-400 text-[10px] font-bold`}>Edit</Text>
+                                    </TouchableOpacity>
+                                </View>
+                                {journeyStatus === 'confirmed' && journeyDate ? (
+                                    <Text style={tw`text-white font-bold text-sm mt-1.5`}>
+                                        {format(journeyDate, 'MMMM d, yyyy')}
+                                    </Text>
+                                ) : journeyStatus === 'pending' && pendingJourney ? (
+                                    <View style={tw`mt-1.5`}>
+                                        <Text style={tw`text-amber-400 text-xs font-bold`}>
+                                            Pending: {format(pendingJourney, 'MMMM d, yyyy')}
+                                        </Text>
+                                        <View style={tw`flex-row gap-2 mt-2`}>
+                                            <TouchableOpacity
+                                                onPress={async () => {
+                                                    try {
+                                                        await updateDoc(doc(db, 'clientProfiles', CLIENT_ID), {
+                                                            journeyStartDate: Timestamp.fromDate(pendingJourney),
+                                                            pendingJourneyDate: null,
+                                                            journeyDateStatus: 'confirmed',
+                                                        });
+                                                        if (currentTrainerId && user) {
+                                                            await sendJourneyDateMessage(
+                                                                { uid: CLIENT_ID, displayName: user.displayName },
+                                                                currentTrainerId, pendingJourney, CLIENT_ID,
+                                                                name || 'Client', 'client'
+                                                            );
+                                                        }
+                                                        setJourneyDate(pendingJourney);
+                                                        setPendingJourney(null);
+                                                        setJourneyStatus('confirmed');
+                                                        Alert.alert('Confirmed!', 'Journey start date accepted.');
+                                                    } catch (e) { Alert.alert('Error', 'Could not confirm.'); }
+                                                }}
+                                                style={tw`flex-row items-center gap-1 px-3 py-1.5 rounded-lg bg-[${COLORS.primary}]`}
+                                            >
+                                                <Check size={12} color="black" />
+                                                <Text style={tw`text-black text-xs font-bold`}>Accept</Text>
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                onPress={() => setShowJourneyPicker(true)}
+                                                style={tw`flex-row items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10`}
+                                            >
+                                                <Pencil size={10} color="#c084fc" />
+                                                <Text style={tw`text-purple-400 text-xs font-bold`}>Edit</Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    </View>
+                                ) : (
+                                    <Text style={tw`text-slate-500 text-xs mt-1.5`}>Not set yet</Text>
+                                )}
                             </View>
                         </View>
                     ) : (
@@ -630,6 +709,38 @@ export default function ClientProfileScreen() {
 
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            {/* Journey Date Picker Modal */}
+            <DatePickerModal
+                visible={showJourneyPicker}
+                onClose={() => setShowJourneyPicker(false)}
+                onSelect={async (date) => {
+                    try {
+                        await updateDoc(doc(db, 'clientProfiles', CLIENT_ID), {
+                            journeyStartDate: Timestamp.fromDate(date),
+                            pendingJourneyDate: null,
+                            journeyDateStatus: 'confirmed',
+                        });
+                        // Notify trainer
+                        if (currentTrainerId && user) {
+                            await sendJourneyDateMessage(
+                                { uid: CLIENT_ID, displayName: user.displayName },
+                                currentTrainerId, date, CLIENT_ID,
+                                name || 'Client', 'client'
+                            );
+                        }
+                        setJourneyDate(date);
+                        setPendingJourney(null);
+                        setJourneyStatus('confirmed');
+                        Alert.alert('Updated!', `Journey start date set to ${format(date, 'MMMM d, yyyy')}.`);
+                    } catch (e) {
+                        Alert.alert('Error', 'Could not update date.');
+                    }
+                }}
+                initialDate={journeyDate || pendingJourney || new Date()}
+                title="Edit Journey Start Date"
+                maxDate={new Date()}
+            />
         </View>
     );
 }

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl, Alert } from 'react-native';
 import tw from 'twrnc';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import { ArrowLeft, Dumbbell, Utensils, Calendar, ChevronRight, Bell } from 'lucide-react-native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import { ArrowLeft, Dumbbell, Utensils, Calendar, ChevronRight, Bell, Plus, Pencil } from 'lucide-react-native';
 import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
@@ -42,9 +42,12 @@ export default function ProgramScreen() {
         }
     };
 
-    useEffect(() => {
-        fetchProfile();
-    }, [user]);
+    // Refresh profile on screen focus (e.g. returning from EditPlan)
+    useFocusEffect(
+        useCallback(() => {
+            fetchProfile();
+        }, [user])
+    );
 
     const onRefresh = () => {
         setRefreshing(true);
@@ -73,6 +76,7 @@ export default function ProgramScreen() {
     const dailyMeals = clientProfile?.dietPlan?.[selectedDay];
     const noExercise = !dailyRoutine || dailyRoutine.length === 0;
     const noMeal = !dailyMeals;
+    const isSolo = !clientProfile?.trainerId;
 
     return (
         <View style={tw`flex-1 bg-[${COLORS.background}] pt-12`}>
@@ -154,13 +158,28 @@ export default function ProgramScreen() {
                     <View>
                         <View style={tw`flex-row justify-between items-center mb-4`}>
                             <Text style={tw`text-white font-bold text-xl`}>{selectedDay}'s Routine</Text>
-                            {dailyRoutine && dailyRoutine.length > 0 && (
-                                <View style={[tw`px-3 py-1 rounded-full`, { backgroundColor: `${COLORS.primary}1A` }]}>
-                                    <Text style={{ color: COLORS.primary, fontWeight: '700', fontSize: 12 }}>
-                                        {dailyRoutine.length} Exercises
-                                    </Text>
-                                </View>
-                            )}
+                            <View style={tw`flex-row items-center gap-2`}>
+                                {dailyRoutine && dailyRoutine.length > 0 && (
+                                    <View style={[tw`px-3 py-1 rounded-full`, { backgroundColor: `${COLORS.primary}1A` }]}>
+                                        <Text style={{ color: COLORS.primary, fontWeight: '700', fontSize: 12 }}>
+                                            {dailyRoutine.length} Exercises
+                                        </Text>
+                                    </View>
+                                )}
+                                {isSolo && dailyRoutine && dailyRoutine.length > 0 && (
+                                    <TouchableOpacity
+                                        onPress={() => (navigation as any).navigate('EditPlan', {
+                                            clientId: user?.uid,
+                                            clientName: clientProfile?.name || user?.displayName || 'User',
+                                            selectedDay: selectedDay,
+                                            isSolo: true,
+                                        })}
+                                        style={tw`w-8 h-8 bg-white/5 rounded-full items-center justify-center`}
+                                    >
+                                        <Pencil size={14} color="#64748b" />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
                         </View>
 
                         {dailyRoutine && dailyRoutine.length > 0 ? (
@@ -200,7 +219,20 @@ export default function ProgramScreen() {
                                 <Text style={tw`text-slate-500 text-center px-10 mb-4`}>
                                     Take it easy! Rest and recovery are just as important as training.
                                 </Text>
-                                {!!clientProfile?.trainerId && (
+                                {isSolo ? (
+                                    <TouchableOpacity
+                                        onPress={() => (navigation as any).navigate('EditPlan', {
+                                            clientId: user?.uid,
+                                            clientName: clientProfile?.name || user?.displayName || 'User',
+                                            selectedDay: selectedDay,
+                                            isSolo: true,
+                                        })}
+                                        style={tw`flex-row items-center gap-2 px-5 py-2.5 rounded-full border border-[${COLORS.primary}]/40 bg-[${COLORS.primary}]/10`}
+                                    >
+                                        <Plus size={14} color={COLORS.primary} />
+                                        <Text style={tw`text-sm font-bold text-[${COLORS.primary}]`}>Create Workout</Text>
+                                    </TouchableOpacity>
+                                ) : !!clientProfile?.trainerId && (
                                     <TouchableOpacity
                                         onPress={() => handleRequestPlan(noMeal ? 'both' : 'exercise')}
                                         disabled={requestSent != null || sendingRequest}
@@ -224,6 +256,19 @@ export default function ProgramScreen() {
                     <View>
                         <View style={tw`flex-row justify-between items-center mb-4`}>
                             <Text style={tw`text-white font-bold text-xl`}>{selectedDay}'s Meals</Text>
+                            {isSolo && dailyMeals && (
+                                <TouchableOpacity
+                                    onPress={() => (navigation as any).navigate('EditPlan', {
+                                        clientId: user?.uid,
+                                        clientName: clientProfile?.name || user?.displayName || 'User',
+                                        selectedDay: selectedDay,
+                                        isSolo: true,
+                                    })}
+                                    style={tw`w-8 h-8 bg-white/5 rounded-full items-center justify-center`}
+                                >
+                                    <Pencil size={14} color="#64748b" />
+                                </TouchableOpacity>
+                            )}
                         </View>
 
                         {dailyMeals ? (
@@ -260,7 +305,20 @@ export default function ProgramScreen() {
                                 <Text style={tw`text-slate-500 text-center px-10 mb-4`}>
                                     No specific meals assigned for {selectedDay}. Eat clean!
                                 </Text>
-                                {!!clientProfile?.trainerId && (
+                                {isSolo ? (
+                                    <TouchableOpacity
+                                        onPress={() => (navigation as any).navigate('EditPlan', {
+                                            clientId: user?.uid,
+                                            clientName: clientProfile?.name || user?.displayName || 'User',
+                                            selectedDay: selectedDay,
+                                            isSolo: true,
+                                        })}
+                                        style={tw`flex-row items-center gap-2 px-5 py-2.5 rounded-full border border-orange-500/40 bg-orange-500/10`}
+                                    >
+                                        <Plus size={14} color="#f97316" />
+                                        <Text style={tw`text-sm font-bold text-orange-400`}>Create Meal Plan</Text>
+                                    </TouchableOpacity>
+                                ) : !!clientProfile?.trainerId && (
                                     <TouchableOpacity
                                         onPress={() => handleRequestPlan(noExercise ? 'both' : 'meal')}
                                         disabled={requestSent != null || sendingRequest}

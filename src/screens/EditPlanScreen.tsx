@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import {
     View, Text, TouchableOpacity, ScrollView,
     TextInput, KeyboardAvoidingView, Platform, Alert, ActivityIndicator
@@ -19,7 +19,11 @@ import { useAuth } from '../context/AuthContext';
 // ------------------------------------------------------------------
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-const createEmptyExercise = () => ({ name: '', sets: '', reps: '', weight: '', notes: '' });
+let _exIdCounter = 0;
+const createEmptyExercise = () => ({
+    _id: `ex_${Date.now()}_${++_exIdCounter}_${Math.random().toString(36).slice(2, 7)}`,
+    name: '', sets: '', reps: '', weight: '', notes: ''
+});
 
 // ------------------------------------------------------------------
 // Section Header
@@ -34,12 +38,96 @@ const SectionHeader = ({ title, step }: { title: string, step: string }) => (
 );
 
 // ------------------------------------------------------------------
+// Memoized Exercise Row – prevents siblings from re-rendering on keystroke
+// ------------------------------------------------------------------
+const ExerciseRow = memo(({ exercise, idx, day, totalInDay, clientUnit, onUpdate, onRemove }: {
+    exercise: any;
+    idx: number;
+    day: string;
+    totalInDay: number;
+    clientUnit: string;
+    onUpdate: (day: string, index: number, field: string, value: string) => void;
+    onRemove: (day: string, index: number) => void;
+}) => (
+    <View style={tw`mb-3 ${idx > 0 ? 'pt-3 border-t border-white/5' : ''}`}>
+        <View style={tw`flex-row items-center mb-2`}>
+            <View style={tw`w-6 h-6 rounded-full bg-[${COLORS.primary}]/15 items-center justify-center mr-2`}>
+                <Text style={tw`text-[${COLORS.primary}] font-bold text-[10px]`}>{idx + 1}</Text>
+            </View>
+            <TextInput
+                style={tw`flex-1 bg-white/5 text-white px-3 py-2 rounded-lg font-bold text-sm mr-2`}
+                placeholder="Exercise Name"
+                placeholderTextColor="#555"
+                defaultValue={exercise.name}
+                onChangeText={(v) => onUpdate(day, idx, 'name', v)}
+            />
+            {totalInDay > 1 && (
+                <TouchableOpacity
+                    onPress={() => onRemove(day, idx)}
+                    style={tw`w-8 h-8 rounded-lg bg-red-500/10 items-center justify-center`}
+                >
+                    <Trash2 size={14} color="#ef4444" />
+                </TouchableOpacity>
+            )}
+        </View>
+
+        <View style={tw`flex-row gap-2 mb-1.5`}>
+            <View style={tw`flex-1`}>
+                <Text style={tw`text-slate-500 text-[10px] font-bold mb-1 text-center`}>SETS</Text>
+                <TextInput
+                    style={tw`bg-white/5 text-white text-center py-2 rounded-lg font-bold text-sm`}
+                    placeholder="3"
+                    placeholderTextColor="#444"
+                    keyboardType="numeric"
+                    defaultValue={String(exercise.sets || '')}
+                    onChangeText={(v) => onUpdate(day, idx, 'sets', v)}
+                />
+            </View>
+            <View style={tw`flex-1`}>
+                <Text style={tw`text-slate-500 text-[10px] font-bold mb-1 text-center`}>REPS</Text>
+                <TextInput
+                    style={tw`bg-white/5 text-white text-center py-2 rounded-lg font-bold text-sm`}
+                    placeholder="12"
+                    placeholderTextColor="#444"
+                    keyboardType="numeric"
+                    defaultValue={String(exercise.reps || '')}
+                    onChangeText={(v) => onUpdate(day, idx, 'reps', v)}
+                />
+            </View>
+            <View style={tw`flex-1`}>
+                <Text style={tw`text-slate-500 text-[10px] font-bold mb-1 text-center`}>WEIGHT ({clientUnit.toUpperCase()})</Text>
+                <TextInput
+                    style={tw`bg-white/5 text-white text-center py-2 rounded-lg font-bold text-sm`}
+                    placeholder={`20${clientUnit}`}
+                    placeholderTextColor="#444"
+                    defaultValue={exercise.weight}
+                    onChangeText={(v) => onUpdate(day, idx, 'weight', v)}
+                />
+            </View>
+        </View>
+
+        <TextInput
+            style={tw`bg-white/5 text-white px-3 py-2 rounded-lg text-xs`}
+            placeholder="Notes (e.g. tempo, rest)"
+            placeholderTextColor="#444"
+            defaultValue={exercise.notes}
+            onChangeText={(v) => onUpdate(day, idx, 'notes', v)}
+        />
+    </View>
+));
+
+// ------------------------------------------------------------------
 // EditPlanScreen
 // ------------------------------------------------------------------
 export default function EditPlanScreen() {
     const navigation = useNavigation();
     const route = useRoute();
-    const { clientId, clientName, selectedDay } = route.params as { clientId: string, clientName: string, selectedDay?: string };
+    const { clientId, clientName, selectedDay, isSolo } = (route.params || {}) as {
+        clientId: string;
+        clientName: string;
+        selectedDay?: string;
+        isSolo?: boolean;
+    };
     const { user } = useAuth();
 
     const [loading, setLoading] = useState(true);
@@ -48,21 +136,25 @@ export default function EditPlanScreen() {
 
     // --- Diet Plan (per day) ---
     const [dietExpanded, setDietExpanded] = useState(true);
-    const [dietPlan, setDietPlan] = useState<any>(
-        DAYS.reduce((acc, day) => ({
-            ...acc,
-            [day]: { breakfast: '', lunch: '', dinner: '', snacks: '' }
-        }), {})
-    );
+    const initialDiet = DAYS.reduce((acc, day) => ({
+        ...acc,
+        [day]: { breakfast: '', lunch: '', dinner: '', snacks: '' }
+    }), {});
+    const [dietPlan, setDietPlan] = useState<any>(initialDiet);
+    const dietDataRef = useRef<any>(initialDiet);
 
     // --- Exercises (per day) ---
+    // exercisePlan (state) drives STRUCTURE only: which rows exist per day.
+    // exerciseDataRef (ref) stores the LIVE values typed into inputs – updated
+    // on every keystroke WITHOUT triggering a re-render, which is the key to
+    // keeping the Android keyboard open.
     const [exercisesExpanded, setExercisesExpanded] = useState(true);
-    const [exercisePlan, setExercisePlan] = useState<any>(
-        DAYS.reduce((acc, day) => ({
-            ...acc,
-            [day]: [createEmptyExercise()]
-        }), {})
-    );
+    const initialExercises = DAYS.reduce((acc, day) => ({
+        ...acc,
+        [day]: [createEmptyExercise()]
+    }), {});
+    const [exercisePlan, setExercisePlan] = useState<any>(initialExercises);
+    const exerciseDataRef = useRef<any>(initialExercises);
 
     useEffect(() => {
         fetchCurrentPlan();
@@ -76,16 +168,27 @@ export default function EditPlanScreen() {
             if (docSnap.exists()) {
                 const data = docSnap.data();
                 if (data.preferredWeightUnit) setClientUnit(data.preferredWeightUnit);
-                if (data.dietPlan) setDietPlan(data.dietPlan);
+                if (data.dietPlan) {
+                    dietDataRef.current = data.dietPlan;
+                    setDietPlan(data.dietPlan);
+                }
                 if (data.exercisePlan) {
-                    // Ensure structure is valid for editing (convert numbers to strings if needed for inputs)
-                    // But for simplicity, we assume component handles types gracefully or we map them here
-                    // Ideally we'd map numbers to strings for TextInputs
-                    const activePlan = { ...data.exercisePlan };
-                    // Fill missing days with empty structure
+                    const activePlan: any = {};
                     DAYS.forEach(day => {
-                        if (!activePlan[day]) activePlan[day] = [createEmptyExercise()];
+                        if (data.exercisePlan[day] && data.exercisePlan[day].length > 0) {
+                            activePlan[day] = data.exercisePlan[day].map((ex: any, i: number) => ({
+                                ...ex,
+                                _id: ex._id || `fetched_${day}_${i}_${Date.now()}`,
+                                sets: ex.sets != null ? String(ex.sets) : '',
+                                reps: ex.reps != null ? String(ex.reps) : '',
+                                weight: ex.weight != null ? String(ex.weight) : '',
+                                notes: ex.notes != null ? String(ex.notes) : '',
+                            }));
+                        } else {
+                            activePlan[day] = [createEmptyExercise()];
+                        }
                     });
+                    exerciseDataRef.current = activePlan;
                     setExercisePlan(activePlan);
                 }
             }
@@ -97,44 +200,49 @@ export default function EditPlanScreen() {
         }
     };
 
-    const updateMeal = (day: string, meal: string, value: string) => {
-        setDietPlan((prev: any) => ({
-            ...prev,
-            [day]: { ...prev[day], [meal]: value }
-        }));
-    };
+    // Only update the ref – no re-render, keyboard stays open
+    const updateMeal = useCallback((day: string, meal: string, value: string) => {
+        const current = dietDataRef.current;
+        dietDataRef.current = { ...current, [day]: { ...current[day], [meal]: value } };
+    }, []);
 
     const addExerciseToDay = (day: string) => {
-        setExercisePlan((prev: any) => ({
-            ...prev,
-            [day]: [...prev[day], createEmptyExercise()]
-        }));
+        const newEx = createEmptyExercise();
+        // Sync ref first with latest values, then add new exercise
+        const current = exerciseDataRef.current;
+        const updated = { ...current, [day]: [...current[day], newEx] };
+        exerciseDataRef.current = updated;
+        setExercisePlan(updated);
     };
 
-    const removeExerciseFromDay = (day: string, index: number) => {
-        if (exercisePlan[day].length === 1) return;
-        setExercisePlan((prev: any) => ({
-            ...prev,
-            [day]: prev[day].filter((_: any, i: number) => i !== index)
-        }));
-    };
+    const removeExerciseFromDay = useCallback((day: string, index: number) => {
+        const current = exerciseDataRef.current;
+        if (current[day].length === 1) return;
+        const updated = { ...current, [day]: current[day].filter((_: any, i: number) => i !== index) };
+        exerciseDataRef.current = updated;
+        setExercisePlan(updated);
+    }, []);
 
-    const updateExerciseInDay = (day: string, index: number, field: string, value: string) => {
-        setExercisePlan((prev: any) => {
-            const updated = [...prev[day]];
-            updated[index] = { ...updated[index], [field]: value };
-            return { ...prev, [day]: updated };
-        });
-    };
+    // Only update the ref – NO setState, NO re-render, keyboard stays open
+    const updateExerciseInDay = useCallback((day: string, index: number, field: string, value: string) => {
+        const current = exerciseDataRef.current;
+        const updated = [...current[day]];
+        updated[index] = { ...updated[index], [field]: value };
+        exerciseDataRef.current = { ...current, [day]: updated };
+    }, []);
 
     const handleSave = async () => {
+        // Read live data from refs (not stale state)
+        const liveExercises = exerciseDataRef.current;
+        const liveDiet = dietDataRef.current;
+
         // 1. Validation
         let hasContent = false;
         const errors: string[] = [];
 
         // Check Diet
         DAYS.forEach(day => {
-            const d = dietPlan[day];
+            const d = liveDiet[day];
             if (d && (d.breakfast?.trim() || d.lunch?.trim() || d.dinner?.trim() || d.snacks?.trim())) {
                 hasContent = true;
             }
@@ -142,7 +250,7 @@ export default function EditPlanScreen() {
 
         // Check Exercises
         DAYS.forEach(day => {
-            exercisePlan[day].forEach((ex: any, idx: number) => {
+            (liveExercises[day] || []).forEach((ex: any, idx: number) => {
                 const hasName = ex.name?.trim();
                 const hasDetails = ex.sets || ex.reps || ex.weight;
 
@@ -174,31 +282,31 @@ export default function EditPlanScreen() {
 
         setSaving(true);
         try {
-            // 2. Clean Data (Proceed with saving)
+            // 2. Clean Data (Proceed with saving) — read from ref
             const cleanedExercises: any = {};
             DAYS.forEach(day => {
-                const valid = exercisePlan[day]
-                    .filter((ex: any) => ex.name.trim())
+                const valid = (liveExercises[day] || [])
+                    .filter((ex: any) => ex.name?.trim())
                     .map((ex: any) => ({
                         name: ex.name.trim(),
                         sets: typeof ex.sets === 'string' ? parseInt(ex.sets) || 0 : ex.sets,
                         reps: typeof ex.reps === 'string' ? parseInt(ex.reps) || 0 : ex.reps,
-                        weight: ex.weight.toString().trim(),
-                        notes: ex.notes.toString().trim(),
+                        weight: (ex.weight || '').toString().trim(),
+                        notes: (ex.notes || '').toString().trim(),
                     }));
                 if (valid.length > 0) cleanedExercises[day] = valid;
             });
 
-            // 2. Update Firestore
+            // 2. Update Firestore — use live ref data
             await updateDoc(doc(db, 'clientProfiles', clientId), {
-                dietPlan,
+                dietPlan: liveDiet,
                 exercisePlan: cleanedExercises,
                 updatedAt: serverTimestamp()
             });
 
             // 3. Determine what was updated
             const hasDiet = DAYS.some(day => {
-                const d = dietPlan[day];
+                const d = liveDiet[day];
                 return d && (d.breakfast?.trim() || d.lunch?.trim() || d.dinner?.trim() || d.snacks?.trim());
             });
             const hasExercise = Object.keys(cleanedExercises).length > 0;
@@ -216,8 +324,8 @@ export default function EditPlanScreen() {
                 messageText = "I've updated your Exercise plan! 💪";
             }
 
-            // 4. Send Notification in Chat
-            if (user) {
+            // 4. Send Notification in Chat (skip for solo users editing their own plan)
+            if (user && !isSolo) {
                 const chatsQuery = query(
                     collection(db, 'chats'),
                     where('participants', 'array-contains', user.uid)
@@ -269,7 +377,7 @@ export default function EditPlanScreen() {
 
             Alert.alert(
                 'Plan Updated!',
-                'Your client has been notified.',
+                isSolo ? 'Your plan has been saved.' : 'Your client has been notified.',
                 [{ text: 'OK', onPress: () => navigation.goBack() }]
             );
 
@@ -298,7 +406,7 @@ export default function EditPlanScreen() {
                 </TouchableOpacity>
                 <View>
                     <Text style={tw`text-white font-bold text-lg text-center`}>Edit Plan</Text>
-                    <Text style={tw`text-slate-400 text-xs text-center`}>for {clientName}</Text>
+                    <Text style={tw`text-slate-400 text-xs text-center`}>{isSolo ? 'My Plan' : `for ${clientName}`}</Text>
                 </View>
                 <TouchableOpacity
                     onPress={handleSave}
@@ -310,17 +418,23 @@ export default function EditPlanScreen() {
                 </TouchableOpacity>
             </View>
 
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={tw`flex-1`}>
+            {/* iOS: KeyboardAvoidingView shifts content up. Android: "pan" mode in app.json handles it natively. */}
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                style={tw`flex-1`}
+                enabled={Platform.OS === 'ios'}
+            >
                 <ScrollView
                     style={tw`flex-1 px-5 pt-5`}
                     contentContainerStyle={{ paddingBottom: 60 }}
-                    keyboardShouldPersistTaps="handled"
+                    keyboardShouldPersistTaps="always"
+                    keyboardDismissMode="none"
                 >
                     {selectedDay && (
                         <View style={tw`bg-amber-500/10 border border-amber-500/20 px-4 py-3 rounded-2xl mb-5 flex-row items-center gap-3`}>
                             <Text style={tw`text-xl`}>📋</Text>
                             <View style={tw`flex-1`}>
-                                <Text style={tw`text-amber-400 font-bold text-sm`}>Client requested a plan for {selectedDay}</Text>
+                                <Text style={tw`text-amber-400 font-bold text-sm`}>{isSolo ? `Editing plan for ${selectedDay}` : `Client requested a plan for ${selectedDay}`}</Text>
                                 <Text style={tw`text-amber-400/60 text-xs mt-0.5`}>Fill in the {selectedDay} section below and save</Text>
                             </View>
                         </View>
@@ -356,7 +470,7 @@ export default function EditPlanScreen() {
                                                 style={tw`bg-white/5 text-white px-3 py-2.5 rounded-lg text-sm`}
                                                 placeholder={`e.g. ${meal === 'breakfast' ? 'Oats + Banana' : meal === 'lunch' ? 'Chicken + Rice' : meal === 'dinner' ? 'Fish + Veg' : 'Nuts'}`}
                                                 placeholderTextColor="#444"
-                                                value={dietPlan[day]?.[meal] || ''}
+                                                defaultValue={dietPlan[day]?.[meal] || ''}
                                                 onChangeText={(v) => updateMeal(day, meal, v)}
                                             />
                                         </View>
@@ -394,71 +508,16 @@ export default function EditPlanScreen() {
                                     <Text style={tw`text-[${COLORS.primary}] font-bold text-sm mb-3`}>{day}</Text>
 
                                     {exercisePlan[day]?.map((exercise: any, idx: number) => (
-                                        <View key={idx} style={tw`mb-3 ${idx > 0 ? 'pt-3 border-t border-white/5' : ''}`}>
-                                            <View style={tw`flex-row items-center mb-2`}>
-                                                <View style={tw`w-6 h-6 rounded-full bg-[${COLORS.primary}]/15 items-center justify-center mr-2`}>
-                                                    <Text style={tw`text-[${COLORS.primary}] font-bold text-[10px]`}>{idx + 1}</Text>
-                                                </View>
-                                                <TextInput
-                                                    style={tw`flex-1 bg-white/5 text-white px-3 py-2 rounded-lg font-bold text-sm mr-2`}
-                                                    placeholder="Exercise Name"
-                                                    placeholderTextColor="#555"
-                                                    value={exercise.name}
-                                                    onChangeText={(v) => updateExerciseInDay(day, idx, 'name', v)}
-                                                />
-                                                {exercisePlan[day].length > 1 && (
-                                                    <TouchableOpacity
-                                                        onPress={() => removeExerciseFromDay(day, idx)}
-                                                        style={tw`w-8 h-8 rounded-lg bg-red-500/10 items-center justify-center`}
-                                                    >
-                                                        <Trash2 size={14} color="#ef4444" />
-                                                    </TouchableOpacity>
-                                                )}
-                                            </View>
-
-                                            <View style={tw`flex-row gap-2 mb-1.5`}>
-                                                <View style={tw`flex-1`}>
-                                                    <Text style={tw`text-slate-500 text-[10px] font-bold mb-1 text-center`}>SETS</Text>
-                                                    <TextInput
-                                                        style={tw`bg-white/5 text-white text-center py-2 rounded-lg font-bold text-sm`}
-                                                        placeholder="3"
-                                                        placeholderTextColor="#444"
-                                                        keyboardType="numeric"
-                                                        value={String(exercise.sets || '')}
-                                                        onChangeText={(v) => updateExerciseInDay(day, idx, 'sets', v)}
-                                                    />
-                                                </View>
-                                                <View style={tw`flex-1`}>
-                                                    <Text style={tw`text-slate-500 text-[10px] font-bold mb-1 text-center`}>REPS</Text>
-                                                    <TextInput
-                                                        style={tw`bg-white/5 text-white text-center py-2 rounded-lg font-bold text-sm`}
-                                                        placeholder="12"
-                                                        placeholderTextColor="#444"
-                                                        keyboardType="numeric"
-                                                        value={String(exercise.reps || '')}
-                                                        onChangeText={(v) => updateExerciseInDay(day, idx, 'reps', v)}
-                                                    />
-                                                </View>
-                                                <View style={tw`flex-1`}>
-                                                    <Text style={tw`text-slate-500 text-[10px] font-bold mb-1 text-center`}>WEIGHT ({clientUnit.toUpperCase()})</Text>
-                                                    <TextInput
-                                                        style={tw`bg-white/5 text-white text-center py-2 rounded-lg font-bold text-sm`}
-                                                        placeholder={`20${clientUnit}`}
-                                                        placeholderTextColor="#444"
-                                                        value={exercise.weight}
-                                                        onChangeText={(v) => updateExerciseInDay(day, idx, 'weight', v)}
-                                                    />
-                                                </View>
-                                            </View>
-
-                                            <TextInput
-                                                style={tw`bg-white/5 text-white px-3 py-2 rounded-lg text-xs`}
-                                                placeholder="Notes (e.g. tempo, rest)"
-                                                placeholderTextColor="#444"
-                                                value={exercise.notes}
-                                                onChangeText={(v) => updateExerciseInDay(day, idx, 'notes', v)}
-                                            />
-                                        </View>
+                                        <ExerciseRow
+                                            key={exercise._id || `fallback_${idx}`}
+                                            exercise={exercise}
+                                            idx={idx}
+                                            day={day}
+                                            totalInDay={exercisePlan[day].length}
+                                            clientUnit={clientUnit}
+                                            onUpdate={updateExerciseInDay}
+                                            onRemove={removeExerciseFromDay}
+                                        />
                                     ))}
 
                                     <TouchableOpacity
