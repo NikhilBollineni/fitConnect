@@ -4,8 +4,9 @@ import tw from 'twrnc';
 import { COLORS } from '../constants/theme';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Users, TrendingUp, Calendar, Zap, ChevronRight, CheckCircle2, DollarSign, UserPlus, MessageSquare } from 'lucide-react-native';
+import { Users, TrendingUp, Calendar, Zap, ChevronRight, CheckCircle2, DollarSign, UserPlus, MessageSquare, Crown } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
 import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 const DEMO_EMAIL = 'nikhilbollineni11@gmail.com';
@@ -13,6 +14,7 @@ const DEMO_EMAIL = 'nikhilbollineni11@gmail.com';
 export default function TrainerDashboard() {
     const navigation = useNavigation<any>();
     const { user } = useAuth();
+    const { isProSubscriber, clientLimit } = useSubscription();
     const [stats, setStats] = useState({
         activeClients: 0,
         revenue: 0,
@@ -182,12 +184,37 @@ export default function TrainerDashboard() {
                         </TouchableOpacity>
                     )}
 
+                    {/* Upgrade Banner */}
+                    {!isProSubscriber && stats.activeClients >= clientLimit && (
+                        <TouchableOpacity
+                            onPress={() => navigation.navigate('Paywall')}
+                            style={tw`bg-[${COLORS.primary}]/10 border border-[${COLORS.primary}]/20 rounded-2xl p-4 mb-6 flex-row items-center justify-between`}
+                        >
+                            <View style={tw`flex-row items-center gap-3 flex-1`}>
+                                <View style={tw`w-10 h-10 bg-[${COLORS.primary}] rounded-full items-center justify-center`}>
+                                    <Crown size={20} color="black" />
+                                </View>
+                                <View style={tw`flex-1`}>
+                                    <Text style={tw`text-white font-bold text-sm`}>Client Limit Reached</Text>
+                                    <Text style={tw`text-slate-400 text-xs mt-0.5`}>Upgrade to Pro for up to 10 clients</Text>
+                                </View>
+                            </View>
+                            <ChevronRight size={20} color={COLORS.primary} />
+                        </TouchableOpacity>
+                    )}
+
                     {/* Quick Actions Header */}
                     <Text style={tw`text-white text-lg font-bold mb-4`}>Quick Actions</Text>
 
                     {/* Add Client Action */}
                     <TouchableOpacity
-                        onPress={() => navigation.navigate('AddClient')}
+                        onPress={() => {
+                            if (!isProSubscriber && stats.activeClients >= clientLimit) {
+                                navigation.navigate('Paywall');
+                            } else {
+                                navigation.navigate('AddClient');
+                            }
+                        }}
                         style={tw`bg-[${COLORS.backgroundLight}] rounded-2xl p-4 border border-white/5 mb-3 flex-row items-center`}
                     >
                         <View style={tw`w-10 h-10 rounded-full bg-green-500/15 items-center justify-center mr-4`}>

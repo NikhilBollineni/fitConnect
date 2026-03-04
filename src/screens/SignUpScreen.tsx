@@ -61,7 +61,7 @@ export default function SignUpScreen() {
 
                 <View style={tw`items-center mb-8`}>
                     <Text style={tw`text-white text-3xl font-bold`}>Create Account</Text>
-                    <Text style={tw`text-slate-400 mt-2`}>Join FitConnect today</Text>
+                    <Text style={tw`text-slate-400 mt-2`}>Join XA today</Text>
                 </View>
 
                 {/* Name Input */}

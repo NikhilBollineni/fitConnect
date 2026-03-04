@@ -22,7 +22,7 @@ export default function WelcomeScreen() {
 
                 {/* Hero Text */}
                 <Text style={tw`text-white text-5xl font-bold tracking-tight text-center mb-4`}>
-                    FitConnect
+                    XA
                 </Text>
                 <Text style={tw`text-slate-400 text-lg text-center leading-7 mb-12`}>
                     Where trainers build plans{'\n'}and clients crush goals.

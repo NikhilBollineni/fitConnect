@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "FitConnect",
+    "name": "XA",
     "slug": "mobile",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -17,9 +17,9 @@
       "bundleIdentifier": "com.nikhilbollineni.fitconnect",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "NSCameraUsageDescription": "FitConnect needs access to your camera to let you take photos of your workouts and meals.",
-        "NSPhotoLibraryUsageDescription": "FitConnect needs access to your photos to let you upload workout logs and progress pictures.",
-        "NSMicrophoneUsageDescription": "FitConnect needs access to your microphone for video recording features.",
+        "NSCameraUsageDescription": "XA needs access to your camera to let you take photos of your workouts and meals.",
+        "NSPhotoLibraryUsageDescription": "XA needs access to your photos to let you upload workout logs and progress pictures.",
+        "NSMicrophoneUsageDescription": "XA needs access to your microphone for video recording features.",
         "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {

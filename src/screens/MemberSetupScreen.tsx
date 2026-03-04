@@ -129,7 +129,7 @@ export default function MemberSetupScreen() {
                     <View style={tw`mb-10`}>
                         <Text style={tw`text-white text-3xl font-bold mb-3`}>How do you train?</Text>
                         <Text style={tw`text-slate-400 text-base`}>
-                            Choose how you want to use FitConnect. You can change this later.
+                            Choose how you want to use XA. You can change this later.
                         </Text>
                     </View>
 

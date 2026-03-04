@@ -11,7 +11,7 @@ import { db } from '../lib/firebase';
 import { collection, getDocs, query, where, doc, getDoc, orderBy, limit, Timestamp, addDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { calculateStats } from '../utils/analyticsHelpers';
 import { UserProfile } from '../types/firestore';
-import WorkoutCalendar from '../components/WorkoutCalendar';
+import WorkoutCalendar, { CalendarStats } from '../components/WorkoutCalendar';
 import { sendPlanRequestMessage } from '../utils/planRequest';
 import { format } from 'date-fns';
 import DatePickerModal from '../components/DatePickerModal';
@@ -36,6 +36,7 @@ export default function ClientDashboard() {
     const [weightInput, setWeightInput] = useState('');
     const [showJourneyPicker, setShowJourneyPicker] = useState(false);
     const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+    const [calendarStats, setCalendarStats] = useState<CalendarStats | null>(null);
     const [respondingToRequest, setRespondingToRequest] = useState<string | null>(null);
 
     const { user } = useAuth();
@@ -511,15 +512,12 @@ export default function ClientDashboard() {
                     {/* Body Weight */}
                     <TouchableOpacity
                         onPress={() => { setWeightInput(displayWeight ? displayWeight.toString() : ''); setShowWeightModal(true); }}
-                        style={[
-                            tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border border-white/5 shadow-md`,
-                            { borderTopWidth: 2, borderTopColor: '#3b82f6' }
-                        ]}
+                        style={tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border border-white/5`}
                         activeOpacity={0.7}
                     >
                         <View style={tw`flex-row items-center justify-between mb-2`}>
-                            <View style={tw`w-9 h-9 bg-blue-500/15 rounded-full items-center justify-center`}>
-                                <Scale size={16} color="#3b82f6" />
+                            <View style={tw`w-8 h-8 bg-blue-500/10 rounded-full items-center justify-center`}>
+                                <Scale size={15} color="#3b82f6" />
                             </View>
                             <View style={tw`w-6 h-6 bg-blue-500/10 rounded-full items-center justify-center`}>
                                 <Plus size={12} color="#3b82f6" />
@@ -539,12 +537,9 @@ export default function ClientDashboard() {
                     </TouchableOpacity>
 
                     {/* Progressive Overload — Weekly Volume */}
-                    <View style={[
-                        tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border border-white/5 shadow-md`,
-                        { borderTopWidth: 2, borderTopColor: COLORS.primary }
-                    ]}>
-                        <View style={tw`w-9 h-9 bg-[${COLORS.primary}]/15 rounded-full items-center justify-center mb-2`}>
-                            <Zap size={16} color={COLORS.primary} />
+                    <View style={tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border border-white/5`}>
+                        <View style={tw`w-8 h-8 bg-[${COLORS.primary}]/10 rounded-full items-center justify-center mb-2`}>
+                            <Zap size={15} color={COLORS.primary} />
                         </View>
                         <Text style={tw`text-white text-xl font-bold`}>
                             {weeklyVolume > 0 ? formatVolume(weeklyVolume) : '—'}
@@ -562,12 +557,9 @@ export default function ClientDashboard() {
                     </View>
 
                     {/* Streak */}
-                    <View style={[
-                        tw`flex-1 ${streak > 0 ? 'bg-orange-500/5' : `bg-[${COLORS.backgroundLight}]`} p-4 rounded-2xl border ${streak > 0 ? 'border-orange-500/20' : 'border-white/5'} shadow-md`,
-                        { borderTopWidth: 2, borderTopColor: '#f97316' }
-                    ]}>
-                        <View style={tw`w-9 h-9 ${streak > 0 ? 'bg-orange-500/20' : 'bg-orange-500/10'} rounded-full items-center justify-center mb-2`}>
-                            <Flame size={16} color="#f97316" />
+                    <View style={tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border border-white/5`}>
+                        <View style={tw`w-8 h-8 bg-orange-500/10 rounded-full items-center justify-center mb-2`}>
+                            <Flame size={15} color="#f97316" />
                         </View>
                         <Text style={tw`text-white text-xl font-bold`}>
                             {streak}<Text style={tw`text-slate-500 text-sm font-normal`}> days</Text>
@@ -576,9 +568,31 @@ export default function ClientDashboard() {
                     </View>
                 </View>
 
+                {/* ─── Monthly Stats ─── */}
+                <View style={tw`px-6 flex-row gap-2 mb-6`}>
+                    <View style={tw`flex-1 bg-[${COLORS.backgroundLight}] py-3 rounded-xl border border-white/5 items-center`}>
+                        <Text style={tw`text-white text-lg font-bold`}>{calendarStats?.totalWorkouts ?? 0}</Text>
+                        <Text style={tw`text-slate-500 text-[9px] font-bold uppercase tracking-wider`}>Sessions</Text>
+                    </View>
+                    <View style={tw`flex-1 bg-[${COLORS.backgroundLight}] py-3 rounded-xl border border-white/5 items-center`}>
+                        <Text style={tw`text-white text-lg font-bold`}>{calendarStats?.totalSets ?? 0}</Text>
+                        <Text style={tw`text-slate-500 text-[9px] font-bold uppercase tracking-wider`}>Total Sets</Text>
+                    </View>
+                    <View style={tw`flex-1 bg-[${COLORS.backgroundLight}] py-3 rounded-xl border border-white/5 items-center`}>
+                        <Text style={tw`text-white text-lg font-bold`}>{calendarStats?.activeDays ?? 0}</Text>
+                        <Text style={tw`text-slate-500 text-[9px] font-bold uppercase tracking-wider`}>Active Days</Text>
+                    </View>
+                    <View style={tw`flex-1 bg-[${COLORS.backgroundLight}] py-3 rounded-xl border border-white/5 items-center`}>
+                        <Text style={tw`text-white text-lg font-bold`}>
+                            {calendarStats && calendarStats.daysInMonth > 0 ? Math.round((calendarStats.activeDays / calendarStats.daysInMonth) * 100) : 0}%
+                        </Text>
+                        <Text style={tw`text-slate-500 text-[9px] font-bold uppercase tracking-wider`}>Consistency</Text>
+                    </View>
+                </View>
+
                 {/* ─── Workout Calendar ─── */}
                 <View style={tw`px-6 mb-6`}>
-                    <WorkoutCalendar clientId={userId} statsPosition="above" />
+                    <WorkoutCalendar clientId={userId} statsPosition="none" onStatsLoaded={setCalendarStats} />
                 </View>
 
                 {/* ─── View Full Program CTA ─── */}

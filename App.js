@@ -9,6 +9,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ChatProvider } from './src/context/ChatContext';
+import { SubscriptionProvider } from './src/context/SubscriptionContext';
 import { COLORS } from './src/constants/theme';
 
 // Screens
@@ -38,6 +39,7 @@ import WorkoutSummaryScreen from './src/screens/SmartLog/WorkoutSummaryScreen';
 import ProgramScreen from './src/screens/ProgramScreen';
 import AIGeneratorView from './src/screens/SmartLog/AIGeneratorView'; // AI Generator
 import EditPlanScreen from './src/screens/EditPlanScreen';
+import PaywallScreen from './src/screens/PaywallScreen';
 
 import * as Notifications from 'expo-notifications';
 import { useNavigation } from '@react-navigation/native';
@@ -103,6 +105,7 @@ function RootNavigator() {
           <Stack.Screen name="TrainerReviews" component={TrainerReviewsScreen} />
           <Stack.Screen name="Chat" component={ChatScreen} />
           <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} />
+          <Stack.Screen name="Paywall" component={PaywallScreen} />
         </>
       ) : (
         // ─── Member / Client Flow ───
@@ -139,12 +142,14 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <ChatProvider>
-          <NavigationContainer>
-            <StatusBar style="light" />
-            <RootNavigator />
-          </NavigationContainer>
-        </ChatProvider>
+        <SubscriptionProvider>
+          <ChatProvider>
+            <NavigationContainer>
+              <StatusBar style="light" />
+              <RootNavigator />
+            </NavigationContainer>
+          </ChatProvider>
+        </SubscriptionProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

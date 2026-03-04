@@ -6,17 +6,19 @@ import {
 import tw from 'twrnc';
 import { useNavigation } from '@react-navigation/native';
 import { COLORS } from '../constants/theme';
-import { ArrowLeft, Save, Loader, LogOut, Award, Briefcase, MapPin } from 'lucide-react-native';
+import { ArrowLeft, Save, Loader, LogOut, Award, Briefcase, MapPin, Crown } from 'lucide-react-native';
 import { db } from '../lib/firebase';
 import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
 
 // ------------------------------------------------------------------
 // TrainerProfileScreen — Manage trainer profile & credentials
 // ------------------------------------------------------------------
 export default function TrainerProfileScreen() {
-    const navigation = useNavigation();
+    const navigation = useNavigation<any>();
     const { logOut, user } = useAuth();
+    const { isProSubscriber } = useSubscription();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
@@ -268,6 +270,36 @@ export default function TrainerProfileScreen() {
                                 value={bio}
                                 onChangeText={setBio}
                             />
+                        </View>
+                    </View>
+
+                    {/* Subscription Section */}
+                    <View style={tw`mt-6`}>
+                        <Text style={tw`text-slate-500 text-xs font-bold mb-3 uppercase tracking-wider`}>Subscription</Text>
+                        <View style={tw`bg-[${COLORS.backgroundLight}] rounded-2xl p-4 border border-white/5`}>
+                            <View style={tw`flex-row items-center justify-between`}>
+                                <View style={tw`flex-row items-center gap-3`}>
+                                    <View style={tw`w-10 h-10 rounded-full ${isProSubscriber ? `bg-[${COLORS.primary}]/15` : 'bg-white/5'} items-center justify-center`}>
+                                        <Crown size={20} color={isProSubscriber ? COLORS.primary : '#64748b'} />
+                                    </View>
+                                    <View>
+                                        <Text style={tw`text-white font-bold`}>
+                                            {isProSubscriber ? 'Pro Plan' : 'Free Plan'}
+                                        </Text>
+                                        <Text style={tw`text-slate-400 text-xs mt-0.5`}>
+                                            {isProSubscriber ? 'Up to 10 clients' : 'Up to 2 clients'}
+                                        </Text>
+                                    </View>
+                                </View>
+                                {!isProSubscriber && (
+                                    <TouchableOpacity
+                                        onPress={() => navigation.navigate('Paywall')}
+                                        style={tw`px-4 py-2 rounded-full bg-[${COLORS.primary}]`}
+                                    >
+                                        <Text style={tw`text-black font-bold text-xs`}>Upgrade</Text>
+                                    </TouchableOpacity>
+                                )}
+                            </View>
                         </View>
                     </View>
 

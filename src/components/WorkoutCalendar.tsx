@@ -6,12 +6,21 @@ import { ChevronLeft, ChevronRight, Flame, Dumbbell, Zap } from 'lucide-react-na
 import { db } from '../lib/firebase';
 import { collection, getDocs, query, where, Timestamp } from 'firebase/firestore';
 
+export interface CalendarStats {
+    totalWorkouts: number;
+    totalSets: number;
+    activeDays: number;
+    daysInMonth: number;
+}
+
 interface WorkoutCalendarProps {
     clientId: string;
     /** @deprecated Use statsPosition instead */
     compact?: boolean;
     /** Controls where monthly stats render: 'above' the grid, 'below', or 'none' to hide. Defaults to 'below'. */
     statsPosition?: 'above' | 'below' | 'none';
+    /** Callback fired when monthly stats are computed */
+    onStatsLoaded?: (stats: CalendarStats) => void;
 }
 
 // ─── Intensity tiers based on total sets ───
@@ -40,7 +49,7 @@ const INTENSITY_LABELS = ['', 'Light', 'Solid', 'Beast'];
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export default function WorkoutCalendar({ clientId, compact, statsPosition }: WorkoutCalendarProps) {
+export default function WorkoutCalendar({ clientId, compact, statsPosition, onStatsLoaded }: WorkoutCalendarProps) {
     // Backward compat: derive from compact if statsPosition not set
     const effectiveStatsPosition = statsPosition ?? (compact ? 'none' : 'below');
     const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -129,6 +138,9 @@ export default function WorkoutCalendar({ clientId, compact, statsPosition }: Wo
             setTotalWorkouts(sessionCount);
             setTotalSetsMonth(setsCount);
             setActiveDays(dayMap.size);
+
+            const dim = new Date(year, month + 1, 0).getDate();
+            onStatsLoaded?.({ totalWorkouts: sessionCount, totalSets: setsCount, activeDays: dayMap.size, daysInMonth: dim });
         } catch (error) {
             console.error('Error fetching workout calendar:', error);
         } finally {
@@ -176,7 +188,7 @@ export default function WorkoutCalendar({ clientId, compact, statsPosition }: Wo
     while (cells.length % 7 !== 0) cells.push(null);
 
     const statsRow = (position: 'above' | 'below') => (
-        <View style={tw`flex-row ${position === 'below' ? 'border-t' : 'border-b'} border-white/5 mx-3`}>
+        <View style={tw`flex-row ${position === 'below' ? 'border-t' : 'border-b'} border-white/10 mx-3`}>
             <View style={tw`flex-1 items-center py-4`}>
                 <View style={tw`flex-row items-center gap-1.5 mb-1`}>
                     <Dumbbell size={14} color={COLORS.primary} />
@@ -245,7 +257,7 @@ export default function WorkoutCalendar({ clientId, compact, statsPosition }: Wo
                     {effectiveStatsPosition === 'above' && statsRow('above')}
 
                     {/* Weekday Headers */}
-                    <View style={tw`flex-row px-3 mb-1`}>
+                    <View style={tw`flex-row px-3 ${effectiveStatsPosition === 'above' ? 'mt-2' : ''} mb-1`}>
                         {WEEKDAYS.map(day => (
                             <View key={day} style={tw`flex-1 items-center py-1`}>
                                 <Text style={tw`text-slate-500 text-[10px] font-bold uppercase`}>{day}</Text>

@@ -126,7 +126,7 @@ export default function VictoryModal({ visible, workoutData, onClose, weightUnit
             `📊 ${totalSets} Sets Completed\n` +
             `⚡ ${avgWeight}${weightUnit} Avg Weight\n` +
             `🔥 ${Math.round(totalVolume).toLocaleString()}${weightUnit} Total Volume\n\n` +
-            `Logged with FitConnect — the fastest workout logger on Earth ⚡`;
+            `Logged with XA — the fastest workout logger on Earth ⚡`;
 
         try {
             await Share.share({

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View, Text, TouchableOpacity, ScrollView,
     TextInput, KeyboardAvoidingView, Platform, Alert
@@ -14,6 +14,7 @@ import { db } from '../lib/firebase';
 import { collection, addDoc, Timestamp, doc, setDoc, getDoc, query, where, getDocs } from 'firebase/firestore';
 import { Clipboard } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
 import { format } from 'date-fns';
 import DatePickerModal from '../components/DatePickerModal';
 
@@ -57,7 +58,26 @@ const SectionHeader = ({ title, step }) => (
 export default function AddClientScreen() {
     const navigation = useNavigation();
     const { user } = useAuth();
+    const { isProSubscriber, clientLimit } = useSubscription();
     const [saving, setSaving] = useState(false);
+    const [activeClientCount, setActiveClientCount] = useState<number | null>(null);
+
+    useEffect(() => {
+        const fetchClientCount = async () => {
+            if (!user?.uid) return;
+            const q = query(
+                collection(db, 'clientProfiles'),
+                where('trainerId', '==', user.uid)
+            );
+            const snap = await getDocs(q);
+            const count = snap.docs.filter(d => {
+                const status = d.data().status;
+                return status === 'active' || status === 'pending_claim';
+            }).length;
+            setActiveClientCount(count);
+        };
+        fetchClientCount();
+    }, [user?.uid]);
 
     // --- Client Details ---
     const [name, setName] = useState('');
@@ -125,6 +145,12 @@ export default function AddClientScreen() {
 
     // --- Save to Firebase ---
     const handleSave = async () => {
+        // Subscription gate
+        if (activeClientCount !== null && activeClientCount >= clientLimit) {
+            (navigation as any).navigate('Paywall');
+            return;
+        }
+
         if (!name.trim()) {
             Alert.alert('Missing Name', "Please enter the client's name.");
             return;
@@ -260,6 +286,20 @@ export default function AddClientScreen() {
                     contentContainerStyle={{ paddingBottom: 60 }}
                     keyboardShouldPersistTaps="handled"
                 >
+                    {/* Subscription limit banner */}
+                    {activeClientCount !== null && !isProSubscriber && (
+                        <TouchableOpacity
+                            onPress={() => (navigation as any).navigate('Paywall')}
+                            style={tw`bg-orange-500/10 border border-orange-500/20 rounded-xl p-3 mb-4 flex-row items-center justify-between`}
+                        >
+                            <Text style={tw`text-orange-300 text-xs font-bold flex-1`}>
+                                {activeClientCount >= clientLimit
+                                    ? `You've reached the free limit of ${clientLimit} clients. Upgrade to add more.`
+                                    : `${activeClientCount}/${clientLimit} client slots used on free plan.`}
+                            </Text>
+                        </TouchableOpacity>
+                    )}
+
                     {/* ============================================ */}
                     {/* SECTION 1: Client Details                     */}
                     {/* ============================================ */}

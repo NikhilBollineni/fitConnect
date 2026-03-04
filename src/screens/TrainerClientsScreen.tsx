@@ -8,6 +8,7 @@ import { Search, Plus, Filter, ChevronRight, Activity, Clock, MoreVertical, Arro
 import { db } from '../lib/firebase';
 import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
 
 const DEMO_EMAIL = 'nikhilbollineni11@gmail.com';
 const MOCK_CLIENTS = [
@@ -22,6 +23,7 @@ const MOCK_CLIENTS = [
 export default function TrainerClientsScreen() {
     const navigation = useNavigation<any>();
     const { user } = useAuth();
+    const { isProSubscriber, clientLimit } = useSubscription();
     const [clients, setClients] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -187,7 +189,16 @@ export default function TrainerClientsScreen() {
                         <Text style={tw`text-white text-3xl font-bold`}>Clients</Text>
                     </View>
                     <TouchableOpacity
-                        onPress={() => navigation.navigate('AddClient')}
+                        onPress={() => {
+                            const activeCount = clients.filter(c =>
+                                c.status === 'active' || c.status === 'pending_claim'
+                            ).length;
+                            if (!isProSubscriber && activeCount >= clientLimit) {
+                                navigation.navigate('Paywall');
+                            } else {
+                                navigation.navigate('AddClient');
+                            }
+                        }}
                         style={tw`w-12 h-12 rounded-full bg-[${COLORS.primary}] items-center justify-center shadow-lg`}
                     >
                         <Plus size={24} color="#000" />

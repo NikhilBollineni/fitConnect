@@ -31,7 +31,7 @@ export default function RoleSelectScreen() {
                 </View>
 
                 <Text style={tw`text-white text-3xl font-bold tracking-tight mb-2`}>
-                    Welcome to FitConnect!
+                    Welcome to XA!
                 </Text>
                 <Text style={tw`text-slate-400 text-base text-center leading-6 px-4`}>
                     Choose how you'd like to use the app.
