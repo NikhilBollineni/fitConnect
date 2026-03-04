@@ -6,14 +6,14 @@ import tw from 'twrnc';
 import { COLORS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { Dumbbell, Calendar, Flame, Utensils, TrendingUp, Zap, ChevronRight, Sparkles, User, Bell, Plus, Scale, Target, Flag, Check, Pencil, UserCheck, XCircle } from 'lucide-react-native';
+import { Dumbbell, Calendar, Flame, Utensils, TrendingUp, Zap, ChevronRight, Sparkles, User, Bell, Plus, Scale, Target, Check, Pencil, UserCheck, XCircle } from 'lucide-react-native';
 import { db } from '../lib/firebase';
 import { collection, getDocs, query, where, doc, getDoc, orderBy, limit, Timestamp, addDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { calculateStats } from '../utils/analyticsHelpers';
 import { UserProfile } from '../types/firestore';
 import WorkoutCalendar from '../components/WorkoutCalendar';
 import { sendPlanRequestMessage } from '../utils/planRequest';
-import { format, differenceInDays } from 'date-fns';
+import { format } from 'date-fns';
 import DatePickerModal from '../components/DatePickerModal';
 import { sendJourneyDateMessage } from '../utils/journeyDate';
 
@@ -511,11 +511,14 @@ export default function ClientDashboard() {
                     {/* Body Weight */}
                     <TouchableOpacity
                         onPress={() => { setWeightInput(displayWeight ? displayWeight.toString() : ''); setShowWeightModal(true); }}
-                        style={tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border border-white/5`}
+                        style={[
+                            tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border border-white/5 shadow-md`,
+                            { borderTopWidth: 2, borderTopColor: '#3b82f6' }
+                        ]}
                         activeOpacity={0.7}
                     >
                         <View style={tw`flex-row items-center justify-between mb-2`}>
-                            <View style={tw`w-8 h-8 bg-blue-500/15 rounded-full items-center justify-center`}>
+                            <View style={tw`w-9 h-9 bg-blue-500/15 rounded-full items-center justify-center`}>
                                 <Scale size={16} color="#3b82f6" />
                             </View>
                             <View style={tw`w-6 h-6 bg-blue-500/10 rounded-full items-center justify-center`}>
@@ -536,8 +539,11 @@ export default function ClientDashboard() {
                     </TouchableOpacity>
 
                     {/* Progressive Overload — Weekly Volume */}
-                    <View style={tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border border-white/5`}>
-                        <View style={tw`w-8 h-8 bg-[${COLORS.primary}]/15 rounded-full items-center justify-center mb-2`}>
+                    <View style={[
+                        tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border border-white/5 shadow-md`,
+                        { borderTopWidth: 2, borderTopColor: COLORS.primary }
+                    ]}>
+                        <View style={tw`w-9 h-9 bg-[${COLORS.primary}]/15 rounded-full items-center justify-center mb-2`}>
                             <Zap size={16} color={COLORS.primary} />
                         </View>
                         <Text style={tw`text-white text-xl font-bold`}>
@@ -556,8 +562,11 @@ export default function ClientDashboard() {
                     </View>
 
                     {/* Streak */}
-                    <View style={tw`flex-1 bg-[${COLORS.backgroundLight}] p-4 rounded-2xl border ${streak > 0 ? 'border-orange-500/20' : 'border-white/5'}`}>
-                        <View style={tw`w-8 h-8 ${streak > 0 ? 'bg-orange-500/20' : 'bg-orange-500/10'} rounded-full items-center justify-center mb-2`}>
+                    <View style={[
+                        tw`flex-1 ${streak > 0 ? 'bg-orange-500/5' : `bg-[${COLORS.backgroundLight}]`} p-4 rounded-2xl border ${streak > 0 ? 'border-orange-500/20' : 'border-white/5'} shadow-md`,
+                        { borderTopWidth: 2, borderTopColor: '#f97316' }
+                    ]}>
+                        <View style={tw`w-9 h-9 ${streak > 0 ? 'bg-orange-500/20' : 'bg-orange-500/10'} rounded-full items-center justify-center mb-2`}>
                             <Flame size={16} color="#f97316" />
                         </View>
                         <Text style={tw`text-white text-xl font-bold`}>
@@ -567,38 +576,9 @@ export default function ClientDashboard() {
                     </View>
                 </View>
 
-                {/* ─── Journey Card ─── */}
-                {(clientProfile as any)?.journeyDateStatus === 'confirmed' && (clientProfile as any)?.journeyStartDate && (
-                    <TouchableOpacity
-                        onPress={() => setShowJourneyPicker(true)}
-                        activeOpacity={0.7}
-                        style={tw`px-6 mb-6`}
-                    >
-                        <View style={tw`bg-[${COLORS.backgroundLight}] rounded-2xl p-4 border border-purple-500/10 flex-row items-center justify-between`}>
-                            <View style={tw`flex-row items-center gap-3`}>
-                                <View style={tw`w-10 h-10 bg-purple-500/15 rounded-full items-center justify-center`}>
-                                    <Flag size={20} color="#c084fc" />
-                                </View>
-                                <View>
-                                    <Text style={tw`text-white font-bold text-base`}>
-                                        {differenceInDays(new Date(), (clientProfile as any).journeyStartDate?.toDate?.() || new Date())} days
-                                    </Text>
-                                    <Text style={tw`text-slate-400 text-xs`}>
-                                        Journey started {format((clientProfile as any).journeyStartDate?.toDate?.() || new Date(), 'MMM d, yyyy')}
-                                    </Text>
-                                </View>
-                            </View>
-                            <View style={tw`flex-row items-center gap-1`}>
-                                <Pencil size={12} color="#64748b" />
-                                <Text style={tw`text-slate-500 text-xs`}>Edit</Text>
-                            </View>
-                        </View>
-                    </TouchableOpacity>
-                )}
-
                 {/* ─── Workout Calendar ─── */}
                 <View style={tw`px-6 mb-6`}>
-                    <WorkoutCalendar clientId={userId} compact={true} />
+                    <WorkoutCalendar clientId={userId} statsPosition="above" />
                 </View>
 
                 {/* ─── View Full Program CTA ─── */}

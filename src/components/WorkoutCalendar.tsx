@@ -8,8 +8,10 @@ import { collection, getDocs, query, where, Timestamp } from 'firebase/firestore
 
 interface WorkoutCalendarProps {
     clientId: string;
-    /** Compact mode hides the month header controls and shows fewer details */
+    /** @deprecated Use statsPosition instead */
     compact?: boolean;
+    /** Controls where monthly stats render: 'above' the grid, 'below', or 'none' to hide. Defaults to 'below'. */
+    statsPosition?: 'above' | 'below' | 'none';
 }
 
 // ─── Intensity tiers based on total sets ───
@@ -38,7 +40,9 @@ const INTENSITY_LABELS = ['', 'Light', 'Solid', 'Beast'];
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export default function WorkoutCalendar({ clientId, compact = false }: WorkoutCalendarProps) {
+export default function WorkoutCalendar({ clientId, compact, statsPosition }: WorkoutCalendarProps) {
+    // Backward compat: derive from compact if statsPosition not set
+    const effectiveStatsPosition = statsPosition ?? (compact ? 'none' : 'below');
     const [currentMonth, setCurrentMonth] = useState(new Date());
     const [workoutDays, setWorkoutDays] = useState<Map<string, number>>(new Map()); // date → total sets
     const [loading, setLoading] = useState(true);
@@ -171,6 +175,43 @@ export default function WorkoutCalendar({ clientId, compact = false }: WorkoutCa
     // Fill remainder to complete last row
     while (cells.length % 7 !== 0) cells.push(null);
 
+    const statsRow = (position: 'above' | 'below') => (
+        <View style={tw`flex-row ${position === 'below' ? 'border-t' : 'border-b'} border-white/5 mx-3`}>
+            <View style={tw`flex-1 items-center py-4`}>
+                <View style={tw`flex-row items-center gap-1.5 mb-1`}>
+                    <Dumbbell size={14} color={COLORS.primary} />
+                    <Text style={tw`text-white text-lg font-bold`}>{totalWorkouts}</Text>
+                </View>
+                <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider`}>Sessions</Text>
+            </View>
+            <View style={tw`w-[1px] bg-white/5`} />
+            <View style={tw`flex-1 items-center py-4`}>
+                <View style={tw`flex-row items-center gap-1.5 mb-1`}>
+                    <Zap size={14} color="#f97316" />
+                    <Text style={tw`text-white text-lg font-bold`}>{totalSetsMonth}</Text>
+                </View>
+                <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider`}>Total Sets</Text>
+            </View>
+            <View style={tw`w-[1px] bg-white/5`} />
+            <View style={tw`flex-1 items-center py-4`}>
+                <View style={tw`flex-row items-center gap-1.5 mb-1`}>
+                    <Flame size={14} color="#ef4444" />
+                    <Text style={tw`text-white text-lg font-bold`}>{activeDays}</Text>
+                </View>
+                <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider`}>Active Days</Text>
+            </View>
+            <View style={tw`w-[1px] bg-white/5`} />
+            <View style={tw`flex-1 items-center py-4`}>
+                <View style={tw`flex-row items-center gap-1.5 mb-1`}>
+                    <Text style={tw`text-white text-lg font-bold`}>
+                        {daysInMonth > 0 ? Math.round((activeDays / daysInMonth) * 100) : 0}%
+                    </Text>
+                </View>
+                <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider`}>Consistency</Text>
+            </View>
+        </View>
+    );
+
     return (
         <View style={tw`bg-[${COLORS.backgroundLight}] rounded-2xl border border-white/5 overflow-hidden`}>
             {/* Month Header */}
@@ -201,6 +242,8 @@ export default function WorkoutCalendar({ clientId, compact = false }: WorkoutCa
                 </View>
             ) : (
                 <>
+                    {effectiveStatsPosition === 'above' && statsRow('above')}
+
                     {/* Weekday Headers */}
                     <View style={tw`flex-row px-3 mb-1`}>
                         {WEEKDAYS.map(day => (
@@ -286,42 +329,7 @@ export default function WorkoutCalendar({ clientId, compact = false }: WorkoutCa
                     </View>
 
                     {/* Summary Stats */}
-                    {!compact && (
-                        <View style={tw`flex-row border-t border-white/5 mx-3`}>
-                            <View style={tw`flex-1 items-center py-4`}>
-                                <View style={tw`flex-row items-center gap-1.5 mb-1`}>
-                                    <Dumbbell size={14} color={COLORS.primary} />
-                                    <Text style={tw`text-white text-lg font-bold`}>{totalWorkouts}</Text>
-                                </View>
-                                <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider`}>Sessions</Text>
-                            </View>
-                            <View style={tw`w-[1px] bg-white/5`} />
-                            <View style={tw`flex-1 items-center py-4`}>
-                                <View style={tw`flex-row items-center gap-1.5 mb-1`}>
-                                    <Zap size={14} color="#f97316" />
-                                    <Text style={tw`text-white text-lg font-bold`}>{totalSetsMonth}</Text>
-                                </View>
-                                <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider`}>Total Sets</Text>
-                            </View>
-                            <View style={tw`w-[1px] bg-white/5`} />
-                            <View style={tw`flex-1 items-center py-4`}>
-                                <View style={tw`flex-row items-center gap-1.5 mb-1`}>
-                                    <Flame size={14} color="#ef4444" />
-                                    <Text style={tw`text-white text-lg font-bold`}>{activeDays}</Text>
-                                </View>
-                                <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider`}>Active Days</Text>
-                            </View>
-                            <View style={tw`w-[1px] bg-white/5`} />
-                            <View style={tw`flex-1 items-center py-4`}>
-                                <View style={tw`flex-row items-center gap-1.5 mb-1`}>
-                                    <Text style={tw`text-white text-lg font-bold`}>
-                                        {daysInMonth > 0 ? Math.round((activeDays / daysInMonth) * 100) : 0}%
-                                    </Text>
-                                </View>
-                                <Text style={tw`text-slate-500 text-[10px] font-bold uppercase tracking-wider`}>Consistency</Text>
-                            </View>
-                        </View>
-                    )}
+                    {effectiveStatsPosition === 'below' && statsRow('below')}
                 </>
             )}
         </View>
