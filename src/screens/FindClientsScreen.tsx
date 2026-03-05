@@ -11,16 +11,18 @@ import {
     User, Loader, CheckCircle
 } from 'lucide-react-native';
 import { db } from '../lib/firebase';
-import { collection, getDocs, addDoc, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, addDoc, Timestamp, query, where } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
 
 // ------------------------------------------------------------------
 // FindClientsScreen — Trainer browses available clients & sends
 //                     coaching requests
 // ------------------------------------------------------------------
 export default function FindClientsScreen() {
-    const navigation = useNavigation();
+    const navigation = useNavigation<any>();
     const { user } = useAuth();
+    const { isProSubscriber, clientLimit } = useSubscription();
     const trainerId = user?.uid ?? '';
     const [clients, setClients] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -59,6 +61,20 @@ export default function FindClientsScreen() {
 
     // ---- Send coaching request ----
     const sendRequest = async (client) => {
+        // Check subscription limit before sending request
+        if (!isProSubscriber) {
+            const q = query(collection(db, 'clientProfiles'), where('trainerId', '==', trainerId));
+            const snap = await getDocs(q);
+            const activeCount = snap.docs.filter(d => {
+                const status = d.data().status;
+                return status === 'active' || status === 'pending_claim';
+            }).length;
+            if (activeCount >= clientLimit) {
+                navigation.navigate('Paywall');
+                return;
+            }
+        }
+
         setSendingTo(client.id);
         try {
             await addDoc(collection(db, 'trainerRequests'), {

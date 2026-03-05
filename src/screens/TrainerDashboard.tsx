@@ -36,7 +36,10 @@ export default function TrainerDashboard() {
                 where('trainerId', '==', user.uid)
             );
             const clientDocs = await getDocs(clientsQuery);
-            const activeClientsCount = clientDocs.size;
+            const activeClientsCount = clientDocs.docs.filter(d => {
+                const status = d.data().status;
+                return status === 'active' || status === 'pending_claim';
+            }).length;
 
             // 2. Fetch Recent Logs for Check-ins & Reviews
             // We fetch the last 20 logs for this trainer to calculate weekly stats

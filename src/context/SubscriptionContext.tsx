@@ -74,11 +74,12 @@ export const SubscriptionProvider = ({ children }: { children: React.ReactNode }
                 }
 
                 // Listen for status changes
-                Purchases.addCustomerInfoUpdateListener((info) => {
+                const listener = (info: CustomerInfo) => {
                     if (!listenerRemoved) {
                         setIsProSubscriber(updateFromCustomerInfo(info));
                     }
-                });
+                };
+                Purchases.addCustomerInfoUpdateListener(listener);
             } catch (error) {
                 console.error('RevenueCat init error:', error);
             } finally {
@@ -90,6 +91,7 @@ export const SubscriptionProvider = ({ children }: { children: React.ReactNode }
 
         return () => {
             listenerRemoved = true;
+            Purchases.removeCustomerInfoUpdateListener?.();
         };
     }, [user?.uid, userRole]);
 
